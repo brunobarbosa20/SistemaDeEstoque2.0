@@ -1,0 +1,54 @@
+@NexuEstoque123
+Nexus Estoque
+
+Usuario tester
+brunodev
+dev123
+
+sistemacontrole2026@outlook.com
+sistemacontrole123
+
+supabase: @Sistemacontrole123
+projeto: @Sistemacontrole123
+
+---- IDEIA FUTURAS ----
+# 📌 Backlog / Planeamento Futuro: Perfil do Utilizador & Recuperação de Acesso
+
+## 🎯 Objetivo
+Estruturar o modelo de dados e as regras de negócio para permitir que cada utilizador tenha um perfil personalizado com dados de contacto (email e telefone), viabilizando futuros fluxos de suporte, notificações de stock e recuperação segura de conta.
+
+---
+
+## 🗄️ 1. Modelação de Dados (Tabela `usuarios` / `perfis`)
+
+Adicionar ou garantir os seguintes campos na tabela do Supabase:
+
+* `id` (UUID): Chave primária vinculada à autenticação do Supabase.
+* `username` (Text): Nome de utilizador para login rápido.
+* `display_name` (Text): Nome de exibição na interface (ex: "Maria Doces").
+* `email` (Text): Email do utilizador (único e obrigatório para recuperação).
+* `telefone` (Text): Número de WhatsApp/Telefone para contacto direto.
+* `role` (Text): Papel do utilizador no sistema (`'user'` ou `'admin'`).
+* `created_at` (Timestamp): Data de registo da conta.
+
+---
+
+## 🔐 2. Requisitos de Negócio & Segurança
+
+### A. Gestão de Perfil
+1. Criar um ecrã/modal de **"Meu Perfil"** onde o utilizador possa visualizar e atualizar o seu `display_name`, `email` e `telefone`.
+2. O campo de email deve ser validado para evitar duplicados na base de dados.
+
+### B. Fluxo de Recuperação de Senha (Visão de Futuro)
+1. **Solicitação de Reset:** O utilizador clica em *"Esqueci a minha senha"* no ecrã de login e introduz o seu email de registo.
+2. **Token de Validação:** O sistema gera um token temporário com prazo de expiração (ou utiliza o serviço nativo de Auth do Supabase) e envia o link de redefinição para o email do utilizador.
+3. **Redefinição:** O utilizador acede ao link, digita a nova senha e o sistema atualiza a credencial com *hash* de segurança.
+
+---
+
+## 📋 3. Tarefas de Implementação (Roadmap)
+
+- [ ] **Fase 1 (Atual):** Validar a aplicação atual com o testador focado apenas no controlo de estoque e Custo Médio Ponderado.
+- [ ] **Fase 2:** Criar a migration/colunas de `email` e `telefone` na base de dados do Supabase.
+- [ ] **Fase 3:** Desenhar a interface do modal "Meu Perfil" no frontend.
+- [ ] **Fase 4:** Conectar o botão de redefinição de senha e configurar o envio de e-mails via Supabase / SMTP.

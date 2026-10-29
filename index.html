@@ -1,0 +1,558 @@
+<!DOCTYPE html>
+<html lang="pt-BR" class="h-full bg-slate-50">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gestão de Estoque & Custo Unitário - SaaS Enterprise</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            50: '#f0f7ff',
+                            100: '#e0effe',
+                            500: '#0284c7',
+                            600: '#0369a1',
+                            700: '#075985',
+                            900: '#0c4a6e',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- Lucide Icons -->
+    <script src="https://cdn.jsdelivr.net/npm/lucide@latest/dist/umd/lucide.min.js"></script>
+    <!-- JSZip para exportação -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <!-- Supabase JS CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body class="h-full text-slate-800 antialiased flex flex-col">
+    <div id="app" class="min-h-screen flex flex-col flex-1">
+        <!-- Notificação Toast -->
+        <div id="toast-container" class="fixed top-5 right-5 z-50 flex flex-col gap-2 max-w-sm w-full pointer-events-none"></div>
+
+        <!-- Tela de Autenticação -->
+        <div id="auth-screen" class="min-h-screen flex items-center justify-center p-4 bg-slate-900 bg-[radial-gradient(ellipse_80%_80%_at_50%_-20%,rgba(120,119,198,0.3),rgba(255,255,255,0))]">
+            <div class="w-full max-w-md bg-white rounded-2xl shadow-2xl border border-slate-100 p-8">
+                <div class="text-center mb-8">
+                    <div class="inline-flex items-center justify-center w-14 h-14 rounded-xl bg-brand-50 text-brand-600 mb-3 shadow-sm border border-brand-100">
+                        <i data-lucide="boxes" class="w-7 h-7"></i>
+                    </div>
+                    <h1 class="text-2xl font-bold text-slate-900 tracking-tight">StockUnit Enterprise</h1>
+                    <p class="text-xs text-slate-500 mt-1">Gestão inteligente de insumos e custo por unidade</p>
+                </div>
+
+                <div class="flex border-b border-slate-200 mb-6">
+                    <button id="tab-login" onclick="switchAuthTab('login')" class="flex-1 pb-3 text-sm font-semibold border-b-2 border-brand-600 text-brand-600 transition-all">Entrar</button>
+                    <button id="tab-register" onclick="switchAuthTab('register')" class="flex-1 pb-3 text-sm font-medium border-b-2 border-transparent text-slate-400 hover:text-slate-600 transition-all">Criar Conta</button>
+                </div>
+
+                <form id="auth-form" onsubmit="handleAuthSubmit(event)" class="space-y-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Usuário</label>
+                        <div class="relative">
+                            <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400">
+                                <i data-lucide="user" class="w-4 h-4"></i>
+                            </span>
+                            <input type="text" id="auth-username" required autocomplete="username" placeholder="Digite seu usuário" class="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-300 rounded-lg text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:bg-white transition-all">
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Senha</label>
+                        <div class="relative">
+                            <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400">
+                                <i data-lucide="lock" class="w-4 h-4"></i>
+                            </span>
+                            <input type="password" id="auth-password" required autocomplete="current-password" placeholder="••••••••" class="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-300 rounded-lg text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:bg-white transition-all">
+                        </div>
+                    </div>
+
+                    <div class="pt-2">
+                        <button type="submit" id="auth-submit-btn" class="w-full py-3 px-4 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg shadow-lg shadow-brand-500/30 hover:shadow-brand-500/50 transition-all flex items-center justify-center gap-2">
+                            <span>Acessar Painel</span>
+                            <i data-lucide="arrow-right" class="w-4 h-4"></i>
+                        </button>
+                    </div>
+                </form>
+
+                <div class="mt-6 pt-4 border-t border-slate-100 text-center">
+                    <p class="text-xs text-slate-400">Ambiente multi-usuário com persistência em nuvem</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Dashboard do Sistema (Oculto por padrão) -->
+        <div id="main-dashboard" class="hidden flex-1 flex">
+            <!-- Sidebar -->
+            <aside class="w-64 bg-slate-900 text-white flex flex-col">
+                <div class="px-6 py-5 border-b border-slate-800">
+                    <h1 class="text-lg font-bold">StockUnit</h1>
+                    <p class="text-xs text-slate-400">Enterprise</p>
+                </div>
+                <nav class="flex-1 px-4 py-6 space-y-2">
+                    <button onclick="showSection('home')" class="w-full text-left px-4 py-2 rounded-lg hover:bg-slate-800 transition-all flex items-center gap-2">
+                        <i data-lucide="layout-dashboard" class="w-4 h-4"></i> Dashboard
+                    </button>
+                    <button onclick="showSection('estoque')" class="w-full text-left px-4 py-2 rounded-lg hover:bg-slate-800 transition-all flex items-center gap-2">
+                        <i data-lucide="package" class="w-4 h-4"></i> Estoque
+                    </button>
+                </nav>
+                <div class="px-4 py-4 border-t border-slate-800">
+                    <span id="user-display-name" class="text-xs font-semibold text-white block mb-2">Usuário</span>
+                    <button onclick="logout()" class="w-full px-4 py-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-xs">Sair</button>
+                </div>
+            </aside>
+            <div class="flex-1 flex flex-col">
+
+            <!-- Conteúdo Principal -->
+            <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+                <div class="flex items-center justify-between mb-2">
+                    <h1 class="text-xl font-bold text-slate-800">Gestão de Estoque</h1>
+                </div>
+
+                <section id="sec-home" class="section-content active space-y-6">
+<!-- Cards Resumo / Estatísticas -->
+                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                    <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center gap-4">
+                        <div class="p-3 bg-brand-50 text-brand-600 rounded-lg">
+                            <i data-lucide="package" class="w-6 h-6"></i>
+                        </div>
+                        <div>
+                            <p class="text-xs font-semibold uppercase text-slate-400">Total de Itens</p>
+                            <h3 id="stat-total-items" class="text-2xl font-bold text-slate-900">0</h3>
+                        </div>
+                    </div>
+
+                    <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center gap-4">
+                        <div class="p-3 bg-emerald-50 text-emerald-600 rounded-lg">
+                            <i data-lucide="activity" class="w-6 h-6"></i>
+                        </div>
+                        <div>
+                            <p class="text-xs font-semibold uppercase text-slate-400">Itens Ativos</p>
+                            <h3 id="stat-active-items" class="text-2xl font-bold text-slate-900">0</h3>
+                        </div>
+                    </div>
+
+                    <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center gap-4">
+                        <div class="p-3 bg-amber-50 text-amber-600 rounded-lg">
+                            <i data-lucide="alert-circle" class="w-6 h-6"></i>
+                        </div>
+                        <div>
+                            <p class="text-xs font-semibold uppercase text-slate-400">Sem Movimentações</p>
+                            <h3 id="stat-empty-items" class="text-2xl font-bold text-slate-900">0</h3>
+                        </div>
+                    </div>
+
+                    <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center gap-4">
+                        <div class="p-3 bg-indigo-50 text-indigo-600 rounded-lg">
+                            <i data-lucide="dollar-sign" class="w-6 h-6"></i>
+                        </div>
+                        <div>
+                            <p class="text-xs font-semibold uppercase text-slate-400">Valor em Estoque</p>
+                            <h3 id="stat-total-value" class="text-2xl font-bold text-slate-900">R$ 0,00</h3>
+                        </div>
+                    </div>
+                </div>
+
+<!-- Atividades Recentes -->
+                <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                    <div class="px-6 py-4 border-b border-slate-100 bg-slate-50">
+                        <h3 class="text-base font-bold text-slate-800 flex items-center gap-2">
+                            <i data-lucide="clock" class="w-5 h-5 text-brand-600"></i>
+                            Atividades Recentes
+                        </h3>
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left text-sm">
+                            <thead class="bg-slate-50 border-b border-slate-200 text-xs text-slate-500 uppercase tracking-wider">
+                                <tr>
+                                    <th class="px-6 py-3.5 font-semibold">Data/Hora</th>
+                                    <th class="px-6 py-3.5 font-semibold">Código</th>
+                                    <th class="px-6 py-3.5 font-semibold">Item</th>
+                                    <th class="px-6 py-3.5 font-semibold">Tipo</th>
+                                    <th class="px-6 py-3.5 font-semibold text-right">Quantidade</th>
+                                </tr>
+                            </thead>
+                            <tbody id="recent-activity-body" class="divide-y divide-slate-100">
+                                <!-- Linhas renderizadas via JS -->
+                            </tbody>
+                        </table>
+                    </div>
+                    <div id="recent-empty" class="p-6 text-center hidden">
+                        <p class="text-xs text-slate-500">Nenhuma movimentação recente.</p>
+                    </div>
+                </div>
+                </section>
+
+                <section id="sec-estoque" class="section-content space-y-6">
+<!-- Barra de Ações / Filtros -->
+                <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col md:flex-row items-center justify-between gap-4">
+                    <div class="relative w-full md:w-96">
+                        <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400">
+                            <i data-lucide="search" class="w-4 h-4"></i>
+                        </span>
+                        <input type="text" id="search-input" oninput="renderItems()" placeholder="Buscar item por nome..." class="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-brand-500">
+                    </div>
+
+                    <div class="flex items-center gap-2 w-full md:w-auto justify-end">
+                        <select id="unit-filter" onchange="renderItems()" class="bg-slate-50 border border-slate-200 text-slate-700 text-sm rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-500">
+                            <option value="ALL">Todas as Medidas</option>
+                            <option value="GR">Gramas (GR)</option>
+                            <option value="UN">Unidades (UN)</option>
+                            <option value="ML">Mililitros (ML)</option>
+                        </select>
+
+                        <button onclick="openNewItemModal()" class="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white font-medium text-sm rounded-lg shadow-sm flex items-center gap-2 transition-all shrink-0">
+                            <i data-lucide="plus" class="w-4 h-4"></i>
+                            <span>Novo Item</span>
+                        </button>
+                    </div>
+                </div>
+
+<!-- Tabela de Itens em Estoque -->
+                <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left text-sm">
+                            <thead class="bg-slate-50 border-b border-slate-200 text-xs text-slate-500 uppercase tracking-wider">
+                                <tr>
+                                    <th class="px-6 py-3.5 font-semibold">Descrição do Item</th>
+                                    <th class="px-6 py-3.5 font-semibold">Unidade</th>
+                                    <th class="px-6 py-3.5 font-semibold">Saldo Atual</th>
+                                    <th class="px-6 py-3.5 font-semibold">Custo Médio Unitário</th>
+                                    <th class="px-6 py-3.5 font-semibold">Status</th>
+                                    <th class="px-6 py-3.5 font-semibold text-right">Ação</th>
+                                </tr>
+                            </thead>
+                            <tbody id="items-table-body" class="divide-y divide-slate-100">
+                                <!-- Linhas renderizadas via JS -->
+                            </tbody>
+                        </table>
+                    </div>
+                    <div id="empty-state" class="p-12 text-center hidden">
+                        <div class="w-12 h-12 rounded-full bg-slate-100 text-slate-400 mx-auto flex items-center justify-center mb-3">
+                            <i data-lucide="inbox" class="w-6 h-6"></i>
+                        </div>
+                        <h4 class="text-sm font-semibold text-slate-700">Nenhum item encontrado</h4>
+                        <p class="text-xs text-slate-500 mt-1">Cadastre novos insumos para começar o controle de custos.</p>
+                    </div>
+                </div>
+                </section>
+            </main>            </main>
+            </div>
+
+        </div>
+
+        <!-- Modal Cadastro de Novo Item -->
+        <div id="modal-new-item" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+            <div class="bg-white w-full max-w-lg rounded-2xl shadow-2xl border border-slate-100 overflow-hidden">
+                <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+                    <h3 class="text-base font-bold text-slate-900 flex items-center gap-2">
+                        <i data-lucide="plus-circle" class="w-5 h-5 text-brand-600"></i>
+                        Cadastrar Novo Item
+                    </h3>
+                    <button onclick="closeModal('modal-new-item')" class="text-slate-400 hover:text-slate-600 p-1 rounded-lg">
+                        <i data-lucide="x" class="w-5 h-5"></i>
+                    </button>
+                </div>
+
+                <form onsubmit="handleCreateItemSubmit(event)" class="p-6 space-y-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1">Descrição / Nome do Item *</label>
+                        <input type="text" id="new-title" required placeholder="Ex: Cacau 100% Pura Origem, Pote Plástico 500ml..." class="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1">Unidade de Medida *</label>
+                        <select id="new-unit" required class="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
+                            <option value="GR">GR - Gramas</option>
+                            <option value="UN">UN - Unidades</option>
+                            <option value="ML">ML - Mililitros</option>
+                        </select>
+                    </div>
+
+                    <div class="pt-2 border-t border-slate-100">
+                        <label class="flex items-center gap-2 cursor-pointer">
+                            <input type="checkbox" id="new-has-movement" onchange="toggleMovementFields()" class="w-4 h-4 text-brand-600 rounded border-slate-300 focus:ring-brand-500">
+                            <span class="text-xs font-semibold text-slate-800">Registrar primeira entrada imediatamente</span>
+                        </label>
+                        <p class="text-[11px] text-slate-500 mt-0.5 pl-6">Se desmarcado, o item fica marcado como "SEM MOVIMENTAÇÕES".</p>
+                    </div>
+
+                    <div id="movement-fields" class="space-y-3 bg-slate-50 p-3.5 rounded-xl border border-slate-200 hidden">
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-xs font-medium text-slate-700 mb-1">Quantidade Inserida</label>
+                                <input type="number" step="0.001" id="new-quantity" placeholder="Ex: 500" class="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-slate-700 mb-1">Valor Total Pago (R$)</label>
+                                <input type="number" step="0.01" id="new-total-cost" placeholder="Ex: 25.00" class="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
+                            </div>
+                        </div>
+                        <div id="new-calculated-preview" class="p-2.5 bg-brand-50 border border-brand-100 rounded-lg text-xs text-brand-800 font-medium text-center hidden">
+                            <!-- Calculado via JS -->
+                        </div>
+                    </div>
+
+                    <div class="pt-4 flex items-center justify-end gap-2 border-t border-slate-100">
+                        <button type="button" onclick="closeModal('modal-new-item')" class="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg transition-all">Cancelar</button>
+                        <button type="submit" class="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white text-xs font-semibold rounded-lg shadow-sm transition-all">Salvar Item</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Modal Pop-up Detalhes / Gerenciamento do Item -->
+        <div id="modal-item-details" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+            <div class="bg-white w-full max-w-3xl rounded-2xl shadow-2xl border border-slate-100 overflow-hidden flex flex-col max-h-[90vh]">
+                <!-- Header Modal -->
+                <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+                    <div class="flex items-center gap-2">
+                        <div class="p-2 bg-brand-100 text-brand-700 rounded-lg">
+                            <i data-lucide="layers" class="w-5 h-5"></i>
+                        </div>
+                        <div>
+                            <h3 id="modal-item-title-display" class="text-base font-bold text-slate-900">Detalhes do Item</h3>
+                            <span id="modal-item-unit-badge" class="inline-block px-2 py-0.5 bg-slate-200 text-slate-700 rounded text-[10px] font-mono">GR</span>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <span id="modal-item-id" class="text-xs font-mono text-slate-500 bg-slate-100 px-2 py-1 rounded">ID</span>
+                        <button onclick="closeModal('modal-item-details')" class="text-slate-400 hover:text-slate-600 p-1 rounded-lg">
+                            <i data-lucide="x" class="w-5 h-5"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Conteúdo Modal (Scrollable) -->
+                <div class="p-6 space-y-6 overflow-y-auto custom-scrollbar flex-1">
+                    <!-- Sessão 1: Edição Rápida do Título / Medida -->
+                    <div class="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
+                        <span class="text-xs font-bold text-slate-500 uppercase tracking-wider block">Edição de Cadastro</span>
+                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                            <div class="sm:col-span-2">
+                                <label class="block text-xs font-medium text-slate-700 mb-1">Título do Item</label>
+                                <input type="text" id="edit-item-title" class="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-sm">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-slate-700 mb-1">Unidade</label>
+                                <select id="edit-item-unit" class="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-sm">
+                                    <option value="GR">GR - Gramas</option>
+                                    <option value="UN">UN - Unidades</option>
+                                    <option value="ML">ML - Mililitros</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="flex justify-end">
+                            <button onclick="saveItemEdits()" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-900 text-white text-xs font-medium rounded-lg transition-all flex items-center gap-1">
+                                <i data-lucide="save" class="w-3.5 h-3.5"></i>
+                                Atualizar Informações
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Resumo Atual do Item -->
+                    <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                        <div class="p-3 bg-slate-50 border border-slate-200 rounded-lg text-center">
+                            <span class="text-[10px] font-semibold text-slate-400 uppercase">Saldo em Estoque</span>
+                            <p id="modal-stock-balance" class="text-lg font-bold text-slate-800">0</p>
+                        </div>
+                        <div class="p-3 bg-slate-50 border border-slate-200 rounded-lg text-center">
+                            <span class="text-[10px] font-semibold text-slate-400 uppercase">Custo Médio p/ Medida</span>
+                            <p id="modal-avg-cost" class="text-lg font-bold text-brand-600">R$ 0,00</p>
+                        </div>
+                        <div class="p-3 bg-slate-50 border border-slate-200 rounded-lg text-center col-span-2 sm:col-span-1">
+                            <span class="text-[10px] font-semibold text-slate-400 uppercase">Status</span>
+                            <p id="modal-status-badge" class="text-xs font-bold text-slate-700 mt-1">-</p>
+                        </div>
+                    </div>
+
+                    <!-- Sessão 2: Nova Movimentação (Entrada / Saída) -->
+                    <div class="bg-white border border-slate-200 rounded-xl p-4 shadow-sm space-y-3">
+                        <h4 class="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                            <i data-lucide="plus" class="w-4 h-4 text-brand-600"></i>
+                            Nova Movimentação no Estoque
+                        </h4>
+                        
+                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                            <div>
+                                <label class="block text-xs font-medium text-slate-700 mb-1">Tipo Movimentação</label>
+                                <select id="mov-type" onchange="toggleMovCostField()" class="w-full px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-sm">
+                                    <option value="IN">Entrada (+)</option>
+                                    <option value="OUT">Saída (-)</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-slate-700 mb-1">Quantidade</label>
+                                <input type="number" step="0.001" id="mov-qty" placeholder="Ex: 50" class="w-full px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-sm">
+                            </div>
+                            <div id="mov-cost-container">
+                                <label class="block text-xs font-medium text-slate-700 mb-1">Valor Total Pago (R$)</label>
+                                <input type="number" step="0.01" id="mov-total-price" placeholder="Ex: 10.00" class="w-full px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-sm">
+                            </div>
+                        </div>
+
+                        <div class="flex justify-end pt-2">
+                            <button onclick="registerMovement()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg shadow-sm flex items-center gap-1.5 transition-all">
+                                <i data-lucide="check" class="w-4 h-4"></i>
+                                Registrar Movimentação
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Sessão 3: Histórico de Movimentações -->
+                    <div>
+                        <h4 class="text-xs font-bold text-slate-800 uppercase tracking-wider mb-2 flex items-center gap-2">
+                            <i data-lucide="history" class="w-4 h-4 text-slate-500"></i>
+                            Histórico Completo de Entradas e Saídas
+                        </h4>
+                        <div class="border border-slate-200 rounded-xl overflow-hidden">
+                            <table class="w-full text-left text-xs">
+                                <thead class="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200">
+                                    <tr>
+                                        <th class="p-2.5">Data/Hora</th>
+                                        <th class="p-2.5">Tipo</th>
+                                        <th class="p-2.5">Qtd</th>
+                                        <th class="p-2.5">Valor Total</th>
+                                        <th class="p-2.5">Custo Calculado</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="history-table-body" class="divide-y divide-slate-100 text-slate-700">
+                                    <!-- Historico -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="px-6 py-3 bg-slate-50 border-t border-slate-100 flex justify-between items-center">
+                    <button onclick="deleteCurrentItem()" class="text-xs text-rose-600 hover:text-rose-800 font-medium flex items-center gap-1">
+                        <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                        Excluir Item
+                    </button>
+                    <button onclick="closeModal('modal-item-details')" class="px-4 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-medium rounded-lg">
+                        Fechar
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Modal Visualizador de Scripts SQL do Supabase -->
+        <div id="modal-sql" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+            <div class="bg-white w-full max-w-4xl rounded-2xl shadow-2xl border border-slate-100 overflow-hidden flex flex-col max-h-[90vh]">
+                <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-900 text-white">
+                    <div class="flex items-center gap-2">
+                        <i data-lucide="database" class="w-5 h-5 text-brand-400"></i>
+                        <h3 class="text-base font-bold">Scripts de Execução Supabase SQL</h3>
+                    </div>
+                    <button onclick="closeModal('modal-sql')" class="text-slate-400 hover:text-white p-1">
+                        <i data-lucide="x" class="w-5 h-5"></i>
+                    </button>
+                </div>
+
+                <div class="p-6 overflow-y-auto space-y-6 custom-scrollbar flex-1 bg-slate-900 text-slate-100 font-mono text-xs">
+                    <div>
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="text-brand-400 font-bold font-sans text-sm">📁 supabase_data/01_schema.sql</span>
+                            <button onclick="copySql('sql-01')" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded font-sans text-xs flex items-center gap-1">
+                                <i data-lucide="copy" class="w-3.5 h-3.5"></i> Copiar SQL 01
+                            </button>
+                        </div>
+                        <pre id="sql-01" class="p-4 bg-slate-950 rounded-xl border border-slate-800 text-emerald-400 overflow-x-auto">-- Script 01: Criação de Tabelas e Extensões
+CREATE TABLE IF NOT EXISTS public.profiles (
+    id UUID PRIMARY KEY,
+    username TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.items (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE NOT NULL,
+    title TEXT NOT NULL,
+    unit TEXT CHECK (unit IN ('GR', 'UN', 'ML')) NOT NULL,
+    current_stock NUMERIC(12, 3) DEFAULT 0,
+    avg_unit_cost NUMERIC(12, 4) DEFAULT 0,
+    status TEXT DEFAULT 'SEM MOVIMENTAÇÕES',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.movements (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    item_id UUID REFERENCES public.items(id) ON DELETE CASCADE NOT NULL,
+    type TEXT CHECK (type IN ('IN', 'OUT')) NOT NULL,
+    quantity NUMERIC(12, 3) NOT NULL,
+    total_cost NUMERIC(12, 2) DEFAULT 0,
+    unit_cost_calculated NUMERIC(12, 4) DEFAULT 0,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);</pre>
+                    </div>
+
+                    <div>
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="text-brand-400 font-bold font-sans text-sm">📁 supabase_data/02_policies.sql</span>
+                            <button onclick="copySql('sql-02')" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded font-sans text-xs flex items-center gap-1">
+                                <i data-lucide="copy" class="w-3.5 h-3.5"></i> Copiar SQL 02
+                            </button>
+                        </div>
+                        <pre id="sql-02" class="p-4 bg-slate-950 rounded-xl border border-slate-800 text-emerald-400 overflow-x-auto">-- Script 02: Habilitação de RLS e Políticas
+ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.movements ENABLE ROW LEVEL SECURITY;
+
+-- Políticas Acesso Livre para Autenticação Simples Customizada via Tabela Profile
+CREATE POLICY "Permite leitura publica perfis" ON public.profiles FOR SELECT USING (true);
+CREATE POLICY "Permite insercao publica perfis" ON public.profiles FOR INSERT WITH CHECK (true);
+
+CREATE POLICY "Permite acesso a itens por usuario" ON public.items FOR ALL USING (true);
+CREATE POLICY "Permite acesso a movimentos por usuario" ON public.movements FOR ALL USING (true);</pre>
+                    </div>
+                </div>
+
+                <div class="px-6 py-3 bg-slate-100 border-t border-slate-200 flex justify-end">
+                    <button onclick="closeModal('modal-sql')" class="px-4 py-1.5 bg-slate-800 hover:bg-slate-900 text-white text-xs font-medium rounded-lg">
+                        Fechar
+                    </button>
+                </div>
+            </div>
+        </div>
+
+    </div>
+    </div>
+
+    <!-- Modal Display Name -->
+    <div id="modal-display-name" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm hidden">
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+            <div class="px-6 py-4 border-b border-slate-100 bg-slate-50">
+                <h3 class="text-base font-bold text-slate-800 flex items-center gap-2">
+                    <i data-lucide="user" class="w-5 h-5 text-brand-600"></i>
+                    Bem-vindo! Informe seu nome de perfil
+                </h3>
+            </div>
+            <form onsubmit="handleDisplayNameSubmit(event)" class="p-6 space-y-4">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1">Nome de Perfil</label>
+                    <input type="text" id="display-name-input" required placeholder="Ex: João Silva" class="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
+                </div>
+                <div class="pt-2 flex justify-end">
+                    <button type="submit" class="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white font-medium text-sm rounded-lg shadow-sm transition-all">
+                        Salvar
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+
+    <!-- Script Principal JavaScript -->
+    <script src="script.js"></script>
+</body>
+</html>

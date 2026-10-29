@@ -1,0 +1,35 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+body { font-family: 'Inter', sans-serif; }
+.custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
+.custom-scrollbar::-webkit-scrollbar-track { background: #f1f5f9; }
+.custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+.custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+/* Transicoes de secoes */
+.section-content {
+    opacity: 0;
+    transition: opacity 0.3s ease;
+    display: none;
+}
+.section-content.active {
+    opacity: 1;
+    display: block;
+}
+
+/* Transicoes de modais */
+[id^="modal-"] {
+    opacity: 0;
+    transition: opacity 0.2s ease;
+}
+[id^="modal-"].modal-open {
+    opacity: 1;
+}
+[id^="modal-"] > div {
+    opacity: 0;
+    transform: scale(0.95);
+    transition: opacity 0.2s ease, transform 0.2s ease;
+}
+[id^="modal-"].modal-open > div {
+    opacity: 1;
+    transform: scale(1);
+}
