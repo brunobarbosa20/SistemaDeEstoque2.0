@@ -27,11 +27,11 @@ async function loadHomeDashboard() {
             const date = new Date(mov.created_at).toLocaleString('pt-BR');
             const tr = document.createElement('tr');
             tr.innerHTML = `
-                <td class="px-6 py-3">${date}</td>
-                <td class="px-6 py-3 font-mono text-xs">${code}</td>
-                <td class="px-6 py-3">${escapeHtml(name)}</td>
-                <td class="px-6 py-3"><span class="px-2 py-0.5 border rounded text-[11px] font-medium ${badgeClass}">${typeLabel}</span></td>
-                <td class="px-6 py-3 text-right">${Number(mov.quantidade || 0).toLocaleString('pt-BR')}</td>
+                <td class="px-3 sm:px-6 py-3 whitespace-nowrap">${date}</td>
+                <td class="hidden md:table-cell px-6 py-3 font-mono text-xs">${code}</td>
+                <td class="px-3 sm:px-6 py-3">${escapeHtml(name)}</td>
+                <td class="px-3 sm:px-6 py-3 whitespace-nowrap"><span class="px-2 py-0.5 border rounded text-[11px] font-medium ${badgeClass}">${typeLabel}</span></td>
+                <td class="px-3 sm:px-6 py-3 text-right whitespace-nowrap">${Number(mov.quantidade || 0).toLocaleString('pt-BR')}</td>
             `;
             tbody.appendChild(tr);
         });
@@ -42,7 +42,194 @@ async function loadHomeDashboard() {
     }
 }
 
+// ===== Menu lateral (hambúrguer no mobile) =====
+function openSidebar() {
+    const sb = document.getElementById('sidebar');
+    const ov = document.getElementById('sidebar-overlay');
+    const btn = document.getElementById('menu-toggle');
+    if (!sb) return;
+    sb.classList.add('sidebar-open');
+    if (ov) ov.classList.add('sidebar-overlay-open');
+    if (btn) { btn.setAttribute('aria-expanded', 'true'); btn.setAttribute('aria-label', 'Fechar menu'); }
+    document.body.style.overflow = 'hidden';
+}
+
+function closeSidebar() {
+    const sb = document.getElementById('sidebar');
+    const ov = document.getElementById('sidebar-overlay');
+    const btn = document.getElementById('menu-toggle');
+    if (sb) sb.classList.remove('sidebar-open');
+    if (ov) ov.classList.remove('sidebar-overlay-open');
+    if (btn) { btn.setAttribute('aria-expanded', 'false'); btn.setAttribute('aria-label', 'Abrir menu'); }
+    document.body.style.overflow = '';
+}
+
+function toggleSidebar() {
+    const sb = document.getElementById('sidebar');
+    if (sb && sb.classList.contains('sidebar-open')) closeSidebar();
+    else openSidebar();
+}
+
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeSidebar();
+});
+
+// Ao aumentar a tela para desktop, garante que o estado do menu mobile seja limpo
+window.matchMedia('(min-width: 1024px)').addEventListener('change', (e) => {
+    if (e.matches) closeSidebar();
+});
+
+// ===== Edição de cadastro (lápis abre/fecha com animação) =====
+function setEditSection(open) {
+    const sec = document.getElementById('edit-section');
+    const btn = document.getElementById('edit-toggle');
+    if (!sec) return;
+    sec.classList.toggle('edit-open', !!open);
+    sec.setAttribute('aria-hidden', open ? 'false' : 'true');
+    if (btn) {
+        btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+        btn.title = open ? 'Fechar edição' : 'Editar cadastro';
+    }
+    if (open) {
+        setTimeout(() => {
+            const input = document.getElementById('edit-item-title');
+            if (input) input.focus({ preventScroll: true });
+        }, 250);
+    }
+}
+
+function toggleEditSection() {
+    const sec = document.getElementById('edit-section');
+    setEditSection(!(sec && sec.classList.contains('edit-open')));
+}
+
+// ===== Máscaras automáticas dos campos (quantidade e valor em R$) =====
+// Moeda: digita só números e o campo vira "R$ 1.234,56" (os dois últimos dígitos são os centavos).
+function maskCurrency(raw) {
+    let digits = String(raw || '').replace(/\D/g, '').slice(0, 12);
+    digits = digits.replace(/^0+/, '');
+    if (!digits) return '';
+    const cents = parseInt(digits, 10);
+    return 'R$ ' + (cents / 100).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// Quantidade: vírgula separa os decimais (até 3 casas) e o ponto separa os milhares: "1.500,75"
+function maskQuantity(raw, inputType) {
+    let v = String(raw || '').replace(/[^\d,.]/g, '');
+    const isPaste = inputType === 'insertFromPaste' || inputType === 'insertFromDrop';
+    if (!v.includes(',')) {
+        if (isPaste) {
+            // colou "10.5" ou "1234.567"? um único ponto que não separa grupos de 3 dígitos é decimal
+            const parts = v.split('.');
+            if (parts.length === 2 && parts[1].length !== 3) v = parts[0] + ',' + parts[1];
+        } else if (v.endsWith('.')) {
+            // teclado numérico que só tem ponto: o ponto digitado no fim vira vírgula
+            v = v.slice(0, -1) + ',';
+        }
+    }
+    v = v.replace(/\./g, '');
+    const commaIdx = v.indexOf(',');
+    const hasComma = commaIdx !== -1;
+    let intPart = (hasComma ? v.slice(0, commaIdx) : v).replace(/\D/g, '').slice(0, 9).replace(/^0+(?=\d)/, '');
+    const decPart = hasComma ? v.slice(commaIdx + 1).replace(/\D/g, '').slice(0, 3) : '';
+    if (!intPart && !hasComma) return '';
+    if (!intPart) intPart = '0';
+    return intPart.replace(/\B(?=(\d{3})+(?!\d))/g, '.') + (hasComma ? ',' + decPart : '');
+}
+
+// Converte o texto formatado de volta para número
+function parseCurrencyInput(str) {
+    const digits = String(str || '').replace(/\D/g, '');
+    return digits ? parseInt(digits, 10) / 100 : 0;
+}
+
+function parseQuantityInput(str) {
+    const n = parseFloat(String(str || '').replace(/\./g, '').replace(',', '.'));
+    return isNaN(n) ? 0 : n;
+}
+
+function applyInputMask(el, inputType) {
+    const old = el.value;
+    const caret = el.selectionStart == null ? old.length : el.selectionStart;
+    const formatted = el.dataset.mask === 'currency' ? maskCurrency(old) : maskQuantity(old, inputType);
+    if (formatted === old) return;
+    const significantBefore = old.slice(0, caret).replace(/[^\d,]/g, '').length;
+    const atEnd = caret >= old.length;
+    el.value = formatted;
+    let pos = formatted.length;
+    if (el.dataset.mask !== 'currency' && !atEnd) {
+        // mantém o cursor no mesmo ponto ao editar no meio do número
+        let count = 0;
+        pos = 0;
+        while (pos < formatted.length && count < significantBefore) {
+            if (/[\d,]/.test(formatted[pos])) count++;
+            pos++;
+        }
+    }
+    try { el.setSelectionRange(pos, pos); } catch (e) {}
+}
+
+document.addEventListener('input', (e) => {
+    const el = e.target;
+    if (el && el.dataset && el.dataset.mask) applyInputMask(el, e.inputType);
+});
+
+// ===== Seletor Entrada / Saída =====
+function setMovType(type) {
+    const t = type === 'OUT' ? 'OUT' : 'IN';
+    const hidden = document.getElementById('mov-type');
+    if (hidden) hidden.value = t;
+    const seg = document.getElementById('mov-seg');
+    if (seg) seg.setAttribute('data-type', t);
+    const card = document.getElementById('mov-card');
+    if (card) card.setAttribute('data-type', t);
+    document.querySelectorAll('.mov-seg-btn').forEach(b => {
+        b.setAttribute('aria-checked', String(b.getAttribute('data-type') === t));
+    });
+    const label = document.getElementById('mov-submit-label');
+    if (label) label.textContent = t === 'IN' ? 'Registrar Entrada' : 'Registrar Saída';
+    toggleMovCostField();
+    updateMovPreview();
+}
+
+// Mostra uma prévia do resultado antes de registrar (bom para conferir no celular)
+function updateMovPreview() {
+    const box = document.getElementById('mov-preview');
+    if (!box) return;
+    const item = itemsList.find(i => String(i.id) === String(currentItemId));
+    const type = (document.getElementById('mov-type') || {}).value || 'IN';
+    const qty = parseQuantityInput((document.getElementById('mov-qty') || {}).value);
+    if (!item || qty <= 0) {
+        box.classList.add('hidden');
+        return;
+    }
+    const un = item.unidade || '';
+    const saldo = Number(item.quantidade) || 0;
+    const fmt = (n) => Number(n).toLocaleString('pt-BR') + ' ' + un;
+    const base = 'text-xs font-medium rounded-lg px-3 py-2 border ';
+    let text, cls;
+    if (type === 'IN') {
+        const total = parseCurrencyInput((document.getElementById('mov-total-price') || {}).value);
+        text = (total > 0 ? 'Custo desta entrada: ' + formatCurrency(total / qty) + ' / ' + un.toLowerCase() + ' · ' : '') +
+               'Novo saldo: ' + fmt(saldo + qty);
+        cls = 'bg-emerald-50 text-emerald-800 border-emerald-200';
+    } else if (qty > saldo) {
+        text = 'Estoque insuficiente: saldo atual é ' + fmt(saldo);
+        cls = 'bg-rose-100 text-rose-800 border-rose-300';
+    } else {
+        text = 'Valor da saída: ' + formatCurrency((Number(item.custo_medio) || 0) * qty) + ' · Saldo restante: ' + fmt(saldo - qty);
+        cls = 'bg-rose-50 text-rose-800 border-rose-200';
+    }
+    box.className = base + cls;
+    box.textContent = text;
+}
+
+document.addEventListener('input', (e) => {
+    if (e.target && (e.target.id === 'mov-qty' || e.target.id === 'mov-total-price')) updateMovPreview();
+});
+
 function showSection(section) {
+    closeSidebar();
     const home = document.getElementById('sec-home');
     const estoque = document.getElementById('sec-estoque');
     const show = section === 'home' ? home : estoque;
@@ -214,6 +401,7 @@ async function handleAuthSubmit(event) {
 }
 
 function logout() {
+    closeSidebar();
     currentUser = null;
     try { localStorage.removeItem('stock_user_session'); } catch (e) { console.error(e); }
     document.getElementById('main-dashboard').classList.add('hidden');
@@ -317,7 +505,14 @@ async function loadItems() {
             .eq('user_id', currentUser.id)
             .order('created_at', { ascending: false });
         if (error) throw error;
-        itemsList = data || [];
+        
+        // Garante que os campos numéricos vêm tratados e nunca vazios/undefined
+        itemsList = (data || []).map(i => ({
+            ...i,
+            quantidade: Number(i.quantidade) || 0,
+            custo_medio: Number(i.custo_medio) || 0,
+            status: i.status || (Number(i.quantidade) > 0 ? 'COM MOVIMENTAÇÕES' : 'SEM MOVIMENTAÇÕES')
+        }));
     } catch (err) {
         console.error('Erro ao carregar itens:', err);
         showToast('Erro ao carregar itens: ' + (err && err.message ? err.message : err), 'error');
@@ -325,6 +520,40 @@ async function loadItems() {
     }
     renderItems();
     updateStats();
+}
+
+function normalizeItem(i) {
+    const quantidade = Number(i.quantidade) || 0;
+    return {
+        ...i,
+        quantidade,
+        custo_medio: Number(i.custo_medio) || 0,
+        status: i.status || (quantidade > 0 ? 'COM MOVIMENTAÇÕES' : 'SEM MOVIMENTAÇÕES')
+    };
+}
+
+function setStatValue(id, text, color) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = text;
+    el.style.setProperty('display', 'block', 'important');
+    el.style.setProperty('visibility', 'visible', 'important');
+    el.style.setProperty('opacity', '1', 'important');
+    if (color) el.style.setProperty('color', color, 'important');
+}
+
+// Atualiza os 3 cards (Saldo, Custo Médio e Status) do modal do item
+function updateModalStatsUI(item) {
+    if (!item) return;
+    const qtd = Number(item.quantidade) || 0;
+    const custo = Number(item.custo_medio) || 0;
+    const unidade = item.unidade || '';
+    const status = item.status || (qtd > 0 ? 'COM MOVIMENTAÇÕES' : 'SEM MOVIMENTAÇÕES');
+    const semMov = status === 'SEM MOVIMENTAÇÕES' || qtd === 0;
+
+    setStatValue('modal-stock-balance', qtd.toLocaleString('pt-BR') + ' ' + unidade, '#1e293b');
+    setStatValue('modal-avg-cost', formatCurrency(custo) + (unidade ? ' / ' + unidade.toLowerCase() : ''), '#0369a1');
+    setStatValue('modal-status-badge', semMov ? 'SEM MOVIMENTAÇÕES' : 'ATIVO NO ESTOQUE', semMov ? '#b45309' : '#047857');
 }
 
 function saveItemsLocalFallback() {
@@ -368,22 +597,22 @@ function renderItems() {
 
         let statusBadge = '';
         if (item.status === 'SEM MOVIMENTAÇÕES' || item.quantidade == 0) {
-            statusBadge = '<span class="px-2.5 py-1 bg-amber-50 text-amber-700 border border-amber-200 rounded-full text-[11px] font-medium">Sem Movimentações</span>';
+            statusBadge = '<span class="px-2.5 py-1 bg-amber-50 text-amber-700 border border-amber-200 rounded-full text-[11px] font-medium whitespace-nowrap">Sem Movimentações</span>';
         } else {
-            statusBadge = '<span class="px-2.5 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full text-[11px] font-medium">Ativo no Estoque</span>';
+            statusBadge = '<span class="px-2.5 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full text-[11px] font-medium whitespace-nowrap">Ativo no Estoque</span>';
         }
 
         tr.innerHTML = `
-            <td class="px-6 py-4 font-semibold text-slate-900">${escapeHtml(item.titulo)}</td>
-            <td class="px-6 py-4">
+            <td class="px-3 sm:px-6 py-4 font-semibold text-slate-900 min-w-[140px]">${escapeHtml(item.titulo)}</td>
+            <td class="px-3 sm:px-6 py-4 whitespace-nowrap">
                 <span class="px-2 py-0.5 bg-slate-100 text-slate-600 rounded text-xs font-mono font-medium">${item.unidade}</span>
             </td>
-            <td class="px-6 py-4 font-semibold text-slate-800">${Number(item.quantidade || 0).toLocaleString('pt-BR')} ${item.unidade}</td>
-            <td class="px-6 py-4 font-bold text-brand-600">
+            <td class="px-3 sm:px-6 py-4 font-semibold text-slate-800 whitespace-nowrap">${Number(item.quantidade || 0).toLocaleString('pt-BR')} ${item.unidade}</td>
+            <td class="hidden md:table-cell px-6 py-4 font-bold text-brand-600 whitespace-nowrap">
                 ${avgCostFormatted} <span class="text-[10px] text-slate-400 font-normal">/ ${unitLabel.toLowerCase()}</span>
             </td>
-            <td class="px-6 py-4">${statusBadge}</td>
-            <td class="px-6 py-4 text-right">
+            <td class="hidden md:table-cell px-6 py-4 whitespace-nowrap">${statusBadge}</td>
+            <td class="px-3 sm:px-6 py-4 text-right">
                 <button onclick="event.stopPropagation(); openItemDetailsModal('${item.id}')" class="p-1.5 text-slate-400 hover:text-brand-600 hover:bg-brand-50 rounded-lg transition-all">
                     <i data-lucide="eye" class="w-4 h-4"></i>
                 </button>
@@ -420,8 +649,8 @@ function toggleMovementFields() {
 }
 
 function calculateNewItemUnitPreview() {
-    const qty = parseFloat(document.getElementById('new-quantity').value) || 0;
-    const cost = parseFloat(document.getElementById('new-total-cost').value) || 0;
+    const qty = parseQuantityInput(document.getElementById('new-quantity').value);
+    const cost = parseCurrencyInput(document.getElementById('new-total-cost').value);
 
 
     const preview = document.getElementById('new-calculated-preview');
@@ -452,26 +681,9 @@ function generateId() {
     });
 }
 
-async function generateItemCode() {
-    let maxNum = 0;
-    if (supabaseClient && currentUser) {
-        try {
-            const { data } = await supabaseClient.from('itens').select('codigo').order('codigo', { ascending: false }).limit(1);
-            if (data && data.length && data[0].codigo) {
-                const num = parseInt(String(data[0].codigo).replace(/^MP/, ''), 10);
-                if (!isNaN(num) && num > maxNum) maxNum = num;
-            }
-        } catch (e) { console.error(e); }
-    } else {
-        (itemsList || []).forEach(i => {
-            if (i.codigo) {
-                const num = parseInt(String(i.codigo).replace(/^MP/, ''), 10);
-                if (!isNaN(num) && num > maxNum) maxNum = num;
-            }
-        });
-    }
-    const next = maxNum + 1;
-    return 'MP' + String(next).padStart(8, '0');
+function generateItemCode() {
+    const randomNum = Math.floor(10000000 + Math.random() * 90000000);
+    return 'MP' + randomNum;
 }
 
 async function handleCreateItemSubmit(event) {
@@ -486,15 +698,15 @@ async function handleCreateItemSubmit(event) {
         return;
     }
 
-    const codigo = await generateItemCode();
+    const codigo =  generateItemCode();
 
     let current_stock = 0;
     let avg_unit_cost = 0;
     let status = 'SEM MOVIMENTAÇÕES';
 
     if (hasMovement) {
-        const qty = parseFloat(document.getElementById('new-quantity').value) || 0;
-        const cost = parseFloat(document.getElementById('new-total-cost').value) || 0;
+        const qty = parseQuantityInput(document.getElementById('new-quantity').value);
+        const cost = parseCurrencyInput(document.getElementById('new-total-cost').value);
         if (qty <= 0) {
             showToast('Quantidade inválida.', 'error');
             return;
@@ -529,7 +741,20 @@ async function handleCreateItemSubmit(event) {
                 status
             }]).select().single();
             if (error) throw error;
-            itemsList.unshift(data);
+            itemsList.unshift(normalizeItem(data));
+
+            // Se o item foi criado com uma entrada inicial, regista também no histórico
+            if (hasMovement && current_stock > 0) {
+                const totalCostVal = parseCurrencyInput(document.getElementById('new-total-cost').value);
+                await supabaseClient.from('historico').insert([{
+                    item_id: newItem.id,
+                    user_id: currentUser.id,
+                    tipo: 'ENTRADA',
+                    quantidade: Number(current_stock),
+                    valor_total: totalCostVal,
+                    custo_unitario: Number(avg_unit_cost)
+                }]);
+            }
         } catch (err) {
             console.error(err);
             itemsList.unshift(newItem);
@@ -545,23 +770,28 @@ async function handleCreateItemSubmit(event) {
 }
 
 function openItemDetailsModal(id) {
+
     const item = itemsList.find(i => String(i.id) === String(id));
     if (!item) return;
     currentItemId = item.id;
 
-    document.getElementById('modal-item-title-display').textContent = item.titulo;
-    document.getElementById('modal-item-unit-badge').textContent = item.unidade;
+    document.getElementById('modal-item-title-display').textContent = item.titulo || item.title || '-';
+    document.getElementById('modal-item-unit-badge').textContent = item.unidade || item.unit || '-';
     const idEl = document.getElementById('modal-item-id');
     if (idEl) idEl.textContent = item.codigo || item.id || 'ID';
-    document.getElementById('edit-item-title').value = item.titulo;
-    document.getElementById('edit-item-unit').value = item.unidade;
-    document.getElementById('modal-stock-balance').textContent = Number(item.quantidade || 0).toLocaleString('pt-BR') + ' ' + item.unidade;
-    document.getElementById('modal-avg-cost').textContent = formatCurrency(item.custo_medio || 0);
-    document.getElementById('modal-status-badge').textContent = item.status || '-';
+    
+    document.getElementById('edit-item-title').value = item.titulo || item.title || '';
+    document.getElementById('edit-item-unit').value = item.unidade || item.unit || '';
+    
+    // Cards do topo (Saldo, Custo Médio, Status)
+    updateModalStatsUI(item);
 
-    document.getElementById('mov-type').value = 'IN';
     document.getElementById('mov-qty').value = '';
+    const priceEl = document.getElementById('mov-total-price');
+    if (priceEl) priceEl.value = '';
+    setMovType('IN');
 
+    setEditSection(false);
     loadItemHistory(item.id);
 
     openModal('modal-item-details');
@@ -629,8 +859,10 @@ async function saveItemEdits() {
 
     document.getElementById('modal-item-title-display').textContent = title;
     document.getElementById('modal-item-unit-badge').textContent = unit;
+    updateModalStatsUI(item);
     renderItems();
     showToast('Informações atualizadas.', 'success');
+    setEditSection(false);
 }
 
 async function registerMovement() {
@@ -639,10 +871,10 @@ async function registerMovement() {
     if (!item) return;
 
     const type = document.getElementById('mov-type').value === 'IN' ? 'ENTRADA' : 'SAIDA';
-    const qty = parseFloat(document.getElementById('mov-qty').value) || 0;
+    const qty = parseQuantityInput(document.getElementById('mov-qty').value);
     let totalCost = 0;
     if (type === 'ENTRADA') {
-        totalCost = parseFloat(document.getElementById('mov-total-price').value) || 0;
+        totalCost = parseCurrencyInput(document.getElementById('mov-total-price').value);
         if (totalCost < 0) {
             showToast('Valor total inválido.', 'error');
             return;
@@ -713,12 +945,11 @@ async function registerMovement() {
         saveItemsLocalFallback();
     }
 
-    document.getElementById('modal-stock-balance').textContent = Number(item.quantidade || 0).toLocaleString('pt-BR') + ' ' + item.unidade;
-    document.getElementById('modal-avg-cost').textContent = formatCurrency(item.custo_medio || 0);
-    document.getElementById('modal-status-badge').textContent = item.status || '-';
+    updateModalStatsUI(item);
 
     document.getElementById('mov-qty').value = '';
     document.getElementById('mov-total-price').value = '';
+    updateMovPreview();
 
     loadItemHistory(item.id);
     renderItems();
