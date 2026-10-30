@@ -210,7 +210,7 @@ function updateMovPreview() {
     let text, cls;
     if (type === 'IN') {
         const total = parseCurrencyInput((document.getElementById('mov-total-price') || {}).value);
-        text = (total > 0 ? 'Custo desta entrada: ' + formatCurrency(total / qty) + ' / ' + un.toLowerCase() + ' · ' : '') +
+        text = (total > 0 ? 'Custo desta entrada: ' + formatUnitCost(total / qty) + ' / ' + un.toLowerCase() + ' · ' : '') +
                'Novo saldo: ' + fmt(saldo + qty);
         cls = 'bg-emerald-50 text-emerald-800 border-emerald-200';
     } else if (qty > saldo) {
@@ -552,7 +552,7 @@ function updateModalStatsUI(item) {
     const semMov = status === 'SEM MOVIMENTAÇÕES' || qtd === 0;
 
     setStatValue('modal-stock-balance', qtd.toLocaleString('pt-BR') + ' ' + unidade, '#1e293b');
-    setStatValue('modal-avg-cost', formatCurrency(custo) + (unidade ? ' / ' + unidade.toLowerCase() : ''), '#0369a1');
+    setStatValue('modal-avg-cost', formatUnitCost(custo) + (unidade ? ' / ' + unidade.toLowerCase() : ''), '#0369a1');
     setStatValue('modal-status-badge', semMov ? 'SEM MOVIMENTAÇÕES' : 'ATIVO NO ESTOQUE', semMov ? '#b45309' : '#047857');
 }
 
@@ -592,7 +592,7 @@ function renderItems() {
         tr.className = 'hover:bg-slate-50/80 transition-colors cursor-pointer border-b border-slate-100';
         tr.onclick = () => openItemDetailsModal(item.id);
 
-        const avgCostFormatted = formatCurrency(item.custo_medio || 0);
+        const avgCostFormatted = formatUnitCost(item.custo_medio || 0);
         const unitLabel = item.unidade;
 
         let statusBadge = '';
@@ -657,7 +657,7 @@ function calculateNewItemUnitPreview() {
     if (!preview) return;
     if (qty > 0 && cost > 0) {
         const unitCost = cost / qty;
-        preview.textContent = 'Custo unitário: ' + formatCurrency(unitCost);
+        preview.textContent = 'Custo unitário: ' + formatUnitCost(unitCost);
         preview.classList.remove('hidden');
     } else {
         preview.classList.add('hidden');
@@ -828,7 +828,7 @@ async function loadItemHistory(itemId) {
             <td class="p-2.5 font-semibold ${typeClass}">${typeLabel}</td>
             <td class="p-2.5">${Number(mov.quantidade || 0).toLocaleString('pt-BR')}</td>
             <td class="p-2.5">${formatCurrency(mov.valor_total || 0)}</td>
-            <td class="p-2.5">${formatCurrency(mov.custo_unitario || 0)}</td>
+            <td class="p-2.5">${formatUnitCost(mov.custo_unitario || 0)}</td>
         `;
         tbody.appendChild(tr);
     });
@@ -1053,6 +1053,11 @@ function showToast(msg, type = 'info') {
         toast.classList.add('opacity-0');
         setTimeout(() => toast.remove(), 300);
     }, 4000);
+}
+
+// Custo por unidade/medida: sempre 3 casas depois da vírgula (ex.: R$ 0,017)
+function formatUnitCost(val) {
+    return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 3, maximumFractionDigits: 3 }).format(Number(val) || 0);
 }
 
 function formatCurrency(val) {
