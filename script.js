@@ -24,14 +24,14 @@ async function loadHomeDashboard() {
             const name = item ? item.titulo : '-';
             const typeLabel = mov.tipo === 'ENTRADA' ? 'Entrada' : 'Saída';
             const badgeClass = mov.tipo === 'ENTRADA' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-rose-50 text-rose-700 border-rose-200';
-            const date = new Date(mov.created_at).toLocaleString('pt-BR');
+            const date = new Date(mov.created_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
             const tr = document.createElement('tr');
             tr.innerHTML = `
                 <td class="px-3 sm:px-6 py-3 whitespace-nowrap">${date}</td>
                 <td class="hidden md:table-cell px-6 py-3 font-mono text-xs">${code}</td>
                 <td class="px-3 sm:px-6 py-3">${escapeHtml(name)}</td>
                 <td class="px-3 sm:px-6 py-3 whitespace-nowrap"><span class="px-2 py-0.5 border rounded text-[11px] font-medium ${badgeClass}">${typeLabel}</span></td>
-                <td class="px-3 sm:px-6 py-3 text-right whitespace-nowrap">${Number(mov.quantidade || 0).toLocaleString('pt-BR')}</td>
+                <td class="px-3 sm:px-6 py-3 text-right whitespace-nowrap">${Number(mov.quantidade || 0).toLocaleString('pt-BR')} ${item.unidade || ''}</td>
             `;
             tbody.appendChild(tr);
         });
@@ -232,17 +232,18 @@ function showSection(section) {
     closeSidebar();
     const home = document.getElementById('sec-home');
     const estoque = document.getElementById('sec-estoque');
-    const show = section === 'home' ? home : estoque;
-    const hide = section === 'home' ? estoque : home;
+    const relatorio = document.getElementById('sec-relatorio');
 
-    if (hide) {
-        hide.classList.remove('active');
-        hide.style.display = 'none';
-    }
+    [home, estoque, relatorio].forEach(sec => {
+        if (sec) {
+            sec.classList.remove('active');
+            sec.style.display = 'none';
+        }
+    });
 
+    const show = section === 'home' ? home : section === 'relatorio' ? relatorio : estoque;
     if (show) {
         show.style.display = 'block';
-        // force reflow
         void show.offsetWidth;
         requestAnimationFrame(() => {
             show.classList.add('active');
@@ -251,6 +252,8 @@ function showSection(section) {
 
     if (section === 'home') {
         loadHomeDashboard();
+    } else if (section === 'relatorio') {
+        loadRelatorio();
     } else {
         renderItems();
     }
@@ -264,6 +267,9 @@ const SUPABASE_KEY = "sb_publishable_WLQdhQL9Em2-DMTmSoBOyg_-W6YHEkH";
 let supabaseClient = null;
 let currentUser = null;
 let itemsList = [];
+let relatorioData = [];
+let relatorioSortCol = null;
+let relatorioSortDir = 'desc'; // 'desc' ou 'asc'
 let currentItemId = null;
 
 function openModal(id) {
@@ -520,6 +526,7 @@ async function loadItems() {
     }
     renderItems();
     updateStats();
+    populateItemsDatalist();
 }
 
 function normalizeItem(i) {
@@ -742,6 +749,7 @@ async function handleCreateItemSubmit(event) {
             }]).select().single();
             if (error) throw error;
             itemsList.unshift(normalizeItem(data));
+            populateItemsDatalist();
 
             // Se o item foi criado com uma entrada inicial, regista também no histórico
             if (hasMovement && current_stock > 0) {
@@ -758,6 +766,7 @@ async function handleCreateItemSubmit(event) {
         } catch (err) {
             console.error(err);
             itemsList.unshift(newItem);
+            populateItemsDatalist();
         }
     }
 
@@ -766,6 +775,7 @@ async function handleCreateItemSubmit(event) {
     closeModal('modal-new-item');
     renderItems();
     updateStats();
+    populateItemsDatalist();
     showToast('Item cadastrado com sucesso.', 'success');
 }
 
@@ -789,6 +799,12 @@ function openItemDetailsModal(id) {
     document.getElementById('mov-qty').value = '';
     const priceEl = document.getElementById('mov-total-price');
     if (priceEl) priceEl.value = '';
+    const dateEl = document.getElementById('mov-date');
+    if (dateEl) {
+        const now = new Date();
+        const pad = n => String(n).padStart(2, '0');
+        dateEl.value = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+    }
     setMovType('IN');
 
     setEditSection(false);
@@ -820,7 +836,7 @@ async function loadItemHistory(itemId) {
 
     movements.forEach(mov => {
         const tr = document.createElement('tr');
-        const date = new Date(mov.created_at).toLocaleString('pt-BR');
+        const date = new Date(mov.created_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
         const typeLabel = mov.tipo === 'ENTRADA' ? 'Entrada' : 'Saída';
         const typeClass = mov.tipo === 'ENTRADA' ? 'text-emerald-600' : 'text-rose-600';
         tr.innerHTML = `
@@ -861,7 +877,8 @@ async function saveItemEdits() {
     document.getElementById('modal-item-unit-badge').textContent = unit;
     updateModalStatsUI(item);
     renderItems();
-    showToast('Informações atualizadas.', 'success');
+    populateItemsDatalist();
+    showToast('InformaÃ§Ãµes atualizadas.', 'success');
     setEditSection(false);
 }
 
@@ -893,6 +910,14 @@ async function registerMovement() {
         return;
     }
 
+    const movementDateInput = document.getElementById('mov-date');
+    let movementDate = new Date();
+    if (movementDateInput && movementDateInput.value) {
+        const parsed = new Date(movementDateInput.value);
+        if (!isNaN(parsed.getTime())) movementDate = parsed;
+    }
+    const movementDateIso = movementDate.toISOString();
+
     const unitCost = type === 'ENTRADA' ? (qty > 0 ? totalCost / qty : 0) : (item.custo_medio || 0);
     const movement = {
         id: 'mov-' + Date.now(),
@@ -902,7 +927,7 @@ async function registerMovement() {
         quantidade: qty,
         valor_total: type === 'ENTRADA' ? totalCost : unitCost * qty,
         custo_unitario: unitCost,
-        created_at: new Date().toISOString()
+        created_at: movementDateIso
     };
 
     if (type === 'ENTRADA') {
@@ -929,7 +954,8 @@ async function registerMovement() {
                 tipo: type,
                 quantidade: Number(qty) || 0,
                 valor_total: Number(movement.valor_total) || 0,
-                custo_unitario: Number(unitCost) || 0
+                custo_unitario: Number(unitCost) || 0,
+                created_at: movementDateIso
             }]);
             await supabaseClient.from('itens').update({
                 quantidade: Number(item.quantidade) || 0,
@@ -949,11 +975,18 @@ async function registerMovement() {
 
     document.getElementById('mov-qty').value = '';
     document.getElementById('mov-total-price').value = '';
+    const dateReset = document.getElementById('mov-date');
+    if (dateReset) {
+        const now = new Date();
+        const pad = n => String(n).padStart(2, '0');
+        dateReset.value = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+    }
     updateMovPreview();
 
     loadItemHistory(item.id);
     renderItems();
     updateStats();
+    populateItemsDatalist();
     await loadHomeDashboard();
     showToast('Movimentação registrada.', 'success');
 }
@@ -963,6 +996,7 @@ async function deleteCurrentItem() {
     if (!confirm('Tem certeza que deseja excluir este item?')) return;
     const item = itemsList.find(i => String(i.id) === String(currentItemId));
     itemsList = itemsList.filter(i => String(i.id) !== String(currentItemId));
+    populateItemsDatalist();
 
     if (supabaseClient && !currentUser.id.startsWith('offline-') && item && !String(item.id).startsWith('local-')) {
         try {
@@ -976,6 +1010,7 @@ async function deleteCurrentItem() {
     currentItemId = null;
     renderItems();
     updateStats();
+    populateItemsDatalist();
     showToast('Item excluído.', 'info');
 }
 
@@ -1031,6 +1066,7 @@ function updateStats() {
 
 function showToast(msg, type = 'info') {
     const container = document.getElementById('toast-container');
+
     const toast = document.createElement('div');
 
     let bgClass = 'bg-slate-900 text-white border-slate-700';
@@ -1055,6 +1091,267 @@ function showToast(msg, type = 'info') {
     }, 4000);
 }
 
+function sortRelatorio(col) {
+    if (relatorioSortCol === col) {
+        relatorioSortDir = relatorioSortDir === 'desc' ? 'asc' : 'desc';
+    } else {
+        relatorioSortCol = col;
+        relatorioSortDir = 'desc'; // primeiro clique: decrescente
+    }
+    applyRelatorioSort();
+    renderRelatorioTable(relatorioData);
+    updateSortIndicators();
+}
+
+function applyRelatorioSort() {
+    if (!relatorioSortCol || !relatorioData) return;
+    const dir = relatorioSortDir === 'desc' ? -1 : 1;
+    relatorioData.sort((a, b) => {
+        let va, vb;
+        const itemA = a.itens || (itemsList || []).find(i => String(i.id) === String(a.item_id)) || {};
+        const itemB = b.itens || (itemsList || []).find(i => String(i.id) === String(b.item_id)) || {};
+        switch (relatorioSortCol) {
+            case 'created_at':
+                va = new Date(a.created_at).getTime();
+                vb = new Date(b.created_at).getTime();
+                break;
+            case 'codigo':
+                va = (itemA.codigo || itemA.id || a.item_id || '').toString().toLowerCase();
+                vb = (itemB.codigo || itemB.id || b.item_id || '').toString().toLowerCase();
+                break;
+            case 'titulo':
+                va = (itemA.titulo || itemA.nome || '').toLowerCase();
+                vb = (itemB.titulo || itemB.nome || '').toLowerCase();
+                break;
+            case 'quantidade':
+                va = Number(a.quantidade || 0);
+                vb = Number(b.quantidade || 0);
+                break;
+            case 'valor_total':
+                va = Number(a.valor_total || 0);
+                vb = Number(b.valor_total || 0);
+                break;
+            case 'custo_unitario':
+                va = Number(a.custo_unitario || 0);
+                vb = Number(b.custo_unitario || 0);
+                break;
+            default:
+                va = 0; vb = 0;
+        }
+        if (va < vb) return -1 * dir;
+        if (va > vb) return 1 * dir;
+        return 0;
+    });
+}
+
+function renderRelatorioTable(movs) {
+    const tbody = document.getElementById('relatorio-table-body');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+    (movs || []).forEach(mov => {
+        const item = mov.itens || (itemsList || []).find(i => String(i.id) === String(mov.item_id)) || {};
+        const code = item.codigo || item.id || mov.item_id;
+        const name = item.titulo || item.nome || '-';
+        const isEntrada = mov.tipo === 'ENTRADA' || mov.tipo === 'CADASTRO';
+        const typeLabel = isEntrada ? 'Entrada' : 'Saída';
+        const badgeClass = isEntrada ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-rose-50 text-rose-700 border-rose-200';
+        const date = new Date(mov.created_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td class="px-3 sm:px-6 py-3 whitespace-nowrap">${date}</td>
+            <td class="hidden md:table-cell px-6 py-3 font-mono text-xs">${escapeHtml(code)}</td>
+            <td class="px-3 sm:px-6 py-3">${escapeHtml(name)}</td>
+            <td class="px-3 sm:px-6 py-3 whitespace-nowrap"><span class="px-2 py-0.5 border rounded text-[11px] font-medium ${badgeClass}">${typeLabel}</span></td>
+            <td class="px-3 sm:px-6 py-3 text-right whitespace-nowrap">${Number(mov.quantidade || 0).toLocaleString('pt-BR')} ${item.unidade || ''}</td>
+            <td class="px-3 sm:px-6 py-3 text-right whitespace-nowrap">${formatCurrency(mov.valor_total || 0)}</td>
+            <td class="px-3 sm:px-6 py-3 text-right whitespace-nowrap">${formatUnitCost(mov.custo_unitario || 0)}</td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
+
+function updateSortIndicators() {
+    const cols = ['created_at', 'codigo', 'titulo', 'quantidade', 'valor_total', 'custo_unitario'];
+    cols.forEach(c => {
+        const el = document.getElementById('sort-ind-' + c);
+        if (el) {
+            if (relatorioSortCol === c) {
+                el.textContent = relatorioSortDir === 'desc' ? '↓' : '↑';
+            } else {
+                el.textContent = '';
+            }
+        }
+    });
+}
+
+
+async function loadRelatorio() {
+    const tbody = document.getElementById('relatorio-table-body');
+    const empty = document.getElementById('relatorio-empty');
+    if (tbody) tbody.innerHTML = '';
+    if (!supabaseClient || !currentUser) {
+        showToast('Supabase não disponível.', 'error');
+        return;
+    }
+
+    const dataInicial = (document.getElementById('rep-data-inicial') || {}).value || '';
+    const dataFinal = (document.getElementById('rep-data-final') || {}).value || '';
+    const nomeFilter = ((document.getElementById('rep-nome') || {}).value || '').trim().toLowerCase();
+    const codigoFilter = ((document.getElementById('rep-codigo') || {}).value || '').trim().toLowerCase();
+    const tipoFilter = (document.getElementById('rep-tipo') || {}).value || 'TODOS';
+    const valorMin = parseFloat((document.getElementById('rep-valor-min') || {}).value);
+    const valorMax = parseFloat((document.getElementById('rep-valor-max') || {}).value);
+
+    try {
+        let query = supabaseClient
+            .from('historico')
+            .select('*, itens(codigo, titulo, unidade)')
+            .eq('user_id', currentUser.id)
+            .order('created_at', { ascending: false });
+
+        if (dataInicial) {
+            const start = new Date(dataInicial + 'T00:00:00');
+            query = query.gte('created_at', start.toISOString());
+        }
+        if (dataFinal) {
+            const end = new Date(dataFinal + 'T23:59:59');
+            query = query.lte('created_at', end.toISOString());
+        }
+        if (tipoFilter === 'ENTRADA') {
+            query = query.in('tipo', ['ENTRADA', 'CADASTRO']);
+        } else if (tipoFilter === 'SAIDA') {
+            query = query.eq('tipo', 'SAIDA');
+        }
+
+        let { data, error } = await query;
+        if (error) {
+            // Fallback: busca sem join e carrega itens separadamente
+            let q2 = supabaseClient
+                .from('historico')
+                .select('*')
+                .eq('user_id', currentUser.id)
+                .order('created_at', { ascending: false });
+            if (dataInicial) q2 = q2.gte('created_at', new Date(dataInicial + 'T00:00:00').toISOString());
+            if (dataFinal) q2 = q2.lte('created_at', new Date(dataFinal + 'T23:59:59').toISOString());
+            if (tipoFilter === 'ENTRADA') q2 = q2.in('tipo', ['ENTRADA', 'CADASTRO']);
+            else if (tipoFilter === 'SAIDA') q2 = q2.eq('tipo', 'SAIDA');
+            const r2 = await q2;
+            if (r2.error) throw r2.error;
+            data = r2.data || [];
+            const { data: itemsData } = await supabaseClient.from('itens').select('id, codigo, titulo, unidade').eq('user_id', currentUser.id);
+            const map = {};
+            (itemsData || []).forEach(it => { map[String(it.id)] = it; });
+            data = data.map(m => ({ ...m, itens: map[String(m.item_id)] || null }));
+        }
+
+        let movs = data || [];
+
+        movs = movs.filter(mov => {
+            const item = mov.itens || (itemsList || []).find(i => String(i.id) === String(mov.item_id)) || {};
+            const name = (item.titulo || item.nome || '').toLowerCase();
+            const code = String(item.codigo || item.id || mov.item_id || '').toLowerCase();
+            if (nomeFilter && !name.includes(nomeFilter)) return false;
+            if (codigoFilter && !code.includes(codigoFilter)) return false;
+            return true;
+        });
+
+        movs = movs.filter(mov => {
+            const val = Number(mov.valor_total || 0);
+            if (!isNaN(valorMin) && val < valorMin) return false;
+            if (!isNaN(valorMax) && val > valorMax) return false;
+            return true;
+        });
+
+        relatorioData = movs;
+
+        if (movs.length === 0) {
+            if (empty) empty.classList.remove('hidden');
+            updateRelatorioResumo([]);
+            updateSortIndicators();
+            updateRelatorioChart([]);
+            if (window.lucide) lucide.createIcons();
+            return;
+        }
+        if (empty) empty.classList.add('hidden');
+
+        applyRelatorioSort();
+        renderRelatorioTable(relatorioData);
+        updateRelatorioResumo(relatorioData);
+        updateSortIndicators();
+        updateRelatorioChart(relatorioData);
+        if (window.lucide) lucide.createIcons();
+    } catch (e) {
+        console.error(e);
+        showToast('Erro ao carregar relatório: ' + (e && e.message ? e.message : e), 'error');
+    }
+}
+
+
+function updateRelatorioResumo(movs) {
+    const totalEl = document.getElementById('rep-total-movimentado');
+    const opsEl = document.getElementById('rep-total-operacoes');
+    const total = (movs || []).reduce((acc, m) => acc + (Number(m.valor_total) || 0), 0);
+    if (totalEl) totalEl.textContent = formatCurrency(total);
+    if (opsEl) opsEl.textContent = (movs || []).length;
+}
+
+
+function limparFiltrosRelatorio() {
+    const ids = ['rep-data-inicial', 'rep-data-final', 'rep-nome', 'rep-codigo', 'rep-valor-min', 'rep-valor-max'];
+    ids.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+    });
+    const tipo = document.getElementById('rep-tipo');
+    if (tipo) tipo.value = 'TODOS';
+    loadRelatorio();
+}
+
+function exportarRelatorioCSV() {
+    if (!relatorioData || relatorioData.length === 0) {
+        showToast('Nenhum dado para exportar.', 'info');
+        return;
+    }
+    const header = ['Data/Hora', 'Código do Item', 'Nome do Item', 'Tipo', 'Quantidade', 'Valor Total Pago', 'Custo Unitário Calculado'];
+    const rows = relatorioData.map(mov => {
+        const item = mov.itens || (itemsList || []).find(i => String(i.id) === String(mov.item_id)) || {};
+        const code = item.codigo || item.id || mov.item_id;
+        const name = item.titulo || item.nome || '-';
+        const isEntrada = mov.tipo === 'ENTRADA' || mov.tipo === 'CADASTRO';
+        const typeLabel = isEntrada ? 'Entrada' : 'Saída';
+        const date = new Date(mov.created_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+        return [
+            date,
+            code,
+            name,
+            typeLabel,
+            Number(mov.quantidade || 0),
+            Number(mov.valor_total || 0).toFixed(2).replace('.', ','),
+            Number(mov.custo_unitario || 0).toFixed(3).replace('.', ',')
+        ];
+    });
+    const csv = [header, ...rows].map(r => r.map(v => {
+        const s = String(v ?? '');
+        if (s.includes(';') || s.includes(',') || s.includes('"') || s.includes('\n')) {
+            return '"' + s.replace(/"/g, '""') + '"';
+        }
+        return s;
+    }).join(';')).join('\n');
+
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'relatorio_estoque.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast('Exportação CSV iniciada.', 'success');
+}
+
+
+
 // Custo por unidade/medida: sempre 3 casas depois da vírgula (ex.: R$ 0,017)
 function formatUnitCost(val) {
     return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 3, maximumFractionDigits: 3 }).format(Number(val) || 0);
@@ -1069,3 +1366,252 @@ function escapeHtml(str) {
         tag => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[tag] || tag)
     );
 }
+
+function populateItemsDatalist() {
+    const dl = document.getElementById('items-datalist');
+    if (!dl) return;
+    const names = [];
+    const seen = new Set();
+    (itemsList || []).forEach(item => {
+        const name = (item.titulo || item.title || item.nome || '').trim();
+        if (name && !seen.has(name.toLowerCase())) {
+            seen.add(name.toLowerCase());
+            names.push(name);
+        }
+    });
+    dl.innerHTML = names.map(n => `<option value="${escapeHtml(n)}"></option>`).join('');
+}
+
+function setupAutocomplete(inputId, resultsId) {
+    const input = document.getElementById(inputId);
+    const results = document.getElementById(resultsId);
+    if (!input || !results) return;
+    function renderList(filter) {
+        const q = (filter || '').trim().toLowerCase();
+        const names = [];
+        const seen = new Set();
+        (itemsList || []).forEach(item => {
+            const name = (item.titulo || item.title || item.nome || '').trim();
+            if (!name) return;
+            if (q && !name.toLowerCase().includes(q)) return;
+            if (seen.has(name.toLowerCase())) return;
+            seen.add(name.toLowerCase());
+            names.push(name);
+        });
+        if (names.length === 0) {
+            results.classList.add('hidden');
+            results.innerHTML = '';
+            return;
+        }
+        results.innerHTML = names.map(n => '<div class="autocomplete-item hover:bg-brand-50 hover:text-brand-700 cursor-pointer p-2.5" data-value="' + escapeHtml(n) + '">' + escapeHtml(n) + '</div>').join('');
+        results.classList.remove('hidden');
+    }
+    input.addEventListener('input', () => renderList(input.value));
+    input.addEventListener('focus', () => renderList(input.value));
+    results.addEventListener('click', (e) => {
+        const item = e.target.closest('.autocomplete-item');
+        if (item) {
+            input.value = item.getAttribute('data-value');
+            results.classList.add('hidden');
+            if (inputId === 'search-input') renderItems();
+        }
+    });
+}
+
+document.addEventListener('click', (e) => {
+    document.querySelectorAll('.autocomplete-results').forEach(r => {
+        const inp = r.previousElementSibling;
+        if (!r.contains(e.target) && !(inp && inp.contains(e.target))) {
+            r.classList.add('hidden');
+        }
+    });
+});
+
+function initAutocomplete() {
+    setupAutocomplete('rep-nome', 'rep-nome-results');
+    setupAutocomplete('search-input', 'search-results');
+}
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initAutocomplete);
+} else {
+    initAutocomplete();
+}
+
+let relatorioChart = null;
+let chartTab = 'preco';
+
+function setChartTab(tab) {
+    chartTab = tab === 'quantidade' ? 'quantidade' : 'preco';
+    document.querySelectorAll('.chart-tab').forEach(btn => {
+        if (btn.getAttribute('data-chart-tab') === chartTab) {
+            btn.classList.remove('bg-slate-100', 'text-slate-600', 'hover:bg-slate-200');
+            btn.classList.add('bg-brand-600', 'text-white');
+        } else {
+            btn.classList.remove('bg-brand-600', 'text-white');
+            btn.classList.add('bg-slate-100', 'text-slate-600', 'hover:bg-slate-200');
+        }
+    });
+    updateRelatorioChart(relatorioData || []);
+}
+
+function updateRelatorioChart(movs) {
+    const card = document.getElementById('relatorio-chart-card');
+    const canvas = document.getElementById('relatorio-chart');
+    if (!card || !canvas) return;
+
+    const data = (movs || []).slice().sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+
+    if (data.length === 0) {
+        card.classList.add('hidden');
+        if (relatorioChart) { relatorioChart.destroy(); relatorioChart = null; }
+        return;
+    }
+
+    card.classList.remove('hidden');
+
+    if (chartTab === 'preco') {
+        const unitCosts = data.map(m => Number(m.custo_unitario || 0));
+        const minVal = Math.min(...unitCosts);
+        const maxVal = Math.max(...unitCosts);
+        const avgVal = unitCosts.reduce((a, b) => a + b, 0) / unitCosts.length;
+
+        const l1 = document.getElementById('chart-label-1');
+        const l2 = document.getElementById('chart-label-2');
+        const l3 = document.getElementById('chart-label-3');
+        const v1 = document.getElementById('chart-val-1');
+        const v2 = document.getElementById('chart-val-2');
+        const v3 = document.getElementById('chart-val-3');
+        const c1 = document.getElementById('chart-card-1');
+        const c2 = document.getElementById('chart-card-2');
+        const c3 = document.getElementById('chart-card-3');
+        if (l1) l1.textContent = 'Menor Preço Pago';
+        if (l2) l2.textContent = 'Maior Preço Pago';
+        if (l3) l3.textContent = 'Custo Médio';
+        if (v1) v1.textContent = formatCurrency(minVal);
+        if (v2) v2.textContent = formatCurrency(maxVal);
+        if (v3) v3.textContent = formatCurrency(avgVal);
+        if (c1) c1.className = 'rounded-xl p-3 bg-emerald-50 text-emerald-700';
+        if (c2) c2.className = 'rounded-xl p-3 bg-rose-50 text-rose-700';
+        if (c3) c3.className = 'rounded-xl p-3 bg-sky-50 text-sky-700';
+        if (v1) v1.className = 'text-lg font-bold text-emerald-600';
+        if (v2) v2.className = 'text-lg font-bold text-rose-600';
+        if (v3) v3.className = 'text-lg font-bold text-sky-600';
+
+        const labels = data.map(m => new Date(m.created_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }));
+        const values = unitCosts;
+        const pointColors = values.map(v => {
+            if (v === minVal) return '#10b981';
+            if (v === maxVal) return '#f43f5e';
+            return '#0284c7';
+        });
+
+        if (relatorioChart) { relatorioChart.destroy(); relatorioChart = null; }
+        const ctx = canvas.getContext('2d');
+        const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+        gradient.addColorStop(0, 'rgba(2, 132, 199, 0.25)');
+        gradient.addColorStop(1, 'rgba(2, 132, 199, 0.02)');
+
+        relatorioChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Preço Unitário (R$)',
+                    data: values,
+                    borderColor: '#0284c7',
+                    backgroundColor: gradient,
+                    fill: true,
+                    tension: 0.4,
+                    pointBackgroundColor: pointColors,
+                    pointBorderColor: pointColors,
+                    pointRadius: 4,
+                    pointHoverRadius: 6
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: true, labels: { color: '#64748b', font: { size: 12 } } },
+                    tooltip: { mode: 'index', intersect: false }
+                },
+                scales: {
+                    x: { ticks: { color: '#64748b', font: { size: 11 }, maxRotation: 45, minRotation: 0 }, grid: { color: 'rgba(100, 116, 139, 0.1)' } },
+                    y: { ticks: { color: '#64748b', font: { size: 11 }, callback: v => 'R$ ' + Number(v).toFixed(2) }, grid: { color: 'rgba(100, 116, 139, 0.1)' } }
+                }
+            }
+        });
+    } else {
+
+        const entradas = data.filter(m => m.tipo === 'ENTRADA' || m.tipo === 'CADASTRO');
+        const saidas = data.filter(m => m.tipo === 'SAIDA');
+        const totalEntradas = entradas.reduce((a, m) => a + (Number(m.quantidade) || 0), 0);
+        const totalSaidas = saidas.reduce((a, m) => a + (Number(m.quantidade) || 0), 0);
+        const saldo = totalEntradas - totalSaidas;
+        const unidade = (data[0] && data[0].itens && data[0].itens.unidade) || (itemsList || []).find(i => String(i.id) === String(data[0].item_id))?.unidade || '';
+
+        const l1 = document.getElementById('chart-label-1');
+        const l2 = document.getElementById('chart-label-2');
+        const l3 = document.getElementById('chart-label-3');
+        const v1 = document.getElementById('chart-val-1');
+        const v2 = document.getElementById('chart-val-2');
+        const v3 = document.getElementById('chart-val-3');
+        const c1 = document.getElementById('chart-card-1');
+        const c2 = document.getElementById('chart-card-2');
+        const c3 = document.getElementById('chart-card-3');
+        if (l1) l1.textContent = 'Total de Entradas';
+        if (l2) l2.textContent = 'Total de Saídas';
+        if (l3) l3.textContent = 'Saldo Movimentado';
+        if (v1) v1.textContent = totalEntradas.toLocaleString('pt-BR') + ' ' + unidade;
+        if (v2) v2.textContent = totalSaidas.toLocaleString('pt-BR') + ' ' + unidade;
+        if (v3) v3.textContent = saldo.toLocaleString('pt-BR') + ' ' + unidade;
+        if (c1) c1.className = 'rounded-xl p-3 bg-emerald-50 text-emerald-700';
+        if (c2) c2.className = 'rounded-xl p-3 bg-rose-50 text-rose-700';
+        if (c3) c3.className = 'rounded-xl p-3 bg-sky-50 text-sky-700';
+        if (v1) v1.className = 'text-lg font-bold text-emerald-600';
+        if (v2) v2.className = 'text-lg font-bold text-rose-600';
+        if (v3) v3.className = 'text-lg font-bold text-sky-600';
+
+        const labels = data.map(m => new Date(m.created_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }));
+        const entradaVals = data.map(m => (m.tipo === 'ENTRADA' || m.tipo === 'CADASTRO') ? Number(m.quantidade || 0) : 0);
+        const saidaVals = data.map(m => m.tipo === 'SAIDA' ? Number(m.quantidade || 0) : 0);
+
+        if (relatorioChart) { relatorioChart.destroy(); relatorioChart = null; }
+        const ctx = canvas.getContext('2d');
+        relatorioChart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [
+                    { label: 'Entradas (' + unidade + ')', data: entradaVals, backgroundColor: 'rgba(16, 185, 129, 0.6)', borderColor: '#10b981', borderWidth: 1 },
+                    { label: 'Saídas (' + unidade + ')', data: saidaVals, backgroundColor: 'rgba(244, 63, 94, 0.6)', borderColor: '#f43f5e', borderWidth: 1 }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: true, labels: { color: '#64748b', font: { size: 12 } } } },
+                scales: {
+                    x: { ticks: { color: '#64748b', font: { size: 11 }, maxRotation: 45, minRotation: 0 }, grid: { color: 'rgba(100, 116, 139, 0.1)' } },
+                    y: { ticks: { color: '#64748b', font: { size: 11 } }, grid: { color: 'rgba(100, 116, 139, 0.1)' } }
+                }
+            }
+        });
+    }
+}
+
+document.addEventListener('click', (e) => {
+    const btn = e.target.closest('.chart-tab');
+    if (btn) {
+        setChartTab(btn.getAttribute('data-chart-tab'));
+    }
+});
+
+// init chart tab active state
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => setChartTab('preco'));
+} else {
+    setChartTab('preco');
+}
+

@@ -28,6 +28,8 @@
     <script src="https://cdn.jsdelivr.net/npm/lucide@latest/dist/umd/lucide.min.js"></script>
     <!-- JSZip para exportação -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <!-- Chart.js para gráficos -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <!-- Supabase JS CDN -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <link rel="stylesheet" href="styles.css">
@@ -191,6 +193,9 @@
                     <button onclick="showSection('estoque')" class="w-full text-left px-4 py-2.5 rounded-lg hover:bg-slate-800 transition-all flex items-center gap-2">
                         <i data-lucide="package" class="w-4 h-4"></i> Estoque
                     </button>
+                    <button onclick="showSection('relatorio')" class="w-full text-left px-4 py-2.5 rounded-lg hover:bg-slate-800 transition-all flex items-center gap-2">
+                        <i data-lucide="file-text" class="w-4 h-4"></i> Relatório
+                    </button>
                 </nav>
                 <div class="px-4 py-4 border-t border-slate-800">
                     <span id="user-display-name" class="text-xs font-semibold text-white block truncate mb-2">Usuário</span>
@@ -287,6 +292,7 @@
                             <i data-lucide="search" class="w-4 h-4"></i>
                         </span>
                         <input type="text" id="search-input" oninput="renderItems()" placeholder="Buscar item por nome..." class="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-brand-500">
+                        <div id="search-results" class="autocomplete-results hidden absolute left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-lg text-slate-800 text-sm max-h-48 overflow-y-auto z-50"></div>
                     </div>
 
                     <div class="flex flex-col sm:flex-row gap-3 w-full md:w-auto md:shrink-0 sm:justify-end">
@@ -332,6 +338,149 @@
                     </div>
                 </div>
                 </section>
+                 <section id="sec-relatorio" class="section-content space-y-6">
+<!-- Cards de Resumo do Relatório -->
+                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                     <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center gap-4">
+                         <div class="p-3 bg-brand-50 text-brand-600 rounded-lg">
+                             <i data-lucide="dollar-sign" class="w-6 h-6"></i>
+                         </div>
+                         <div>
+                             <p class="text-xs text-slate-500 font-medium">Total Movimentado no Período</p>
+                             <p id="rep-total-movimentado" class="text-xl font-bold text-slate-800">R$ 0,00</p>
+                         </div>
+                     </div>
+                     <div class="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center gap-4">
+                         <div class="p-3 bg-brand-50 text-brand-600 rounded-lg">
+                             <i data-lucide="hash" class="w-6 h-6"></i>
+                         </div>
+                         <div>
+                             <p class="text-xs text-slate-500 font-medium">Quantidade de Operações Encontradas</p>
+                             <p id="rep-total-operacoes" class="text-xl font-bold text-slate-800">0</p>
+                         </div>
+                     </div>
+                 </div>
+
+<!-- Bloco de Filtros -->
+                 <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-4">
+                     <h3 class="text-sm font-semibold text-slate-700 flex items-center gap-2">
+                         <i data-lucide="filter" class="w-4 h-4"></i> Filtros do Relatório
+                     </h3>
+                     <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                         <div>
+                             <label class="block text-xs font-medium text-slate-500 mb-1">Data Inicial</label>
+                             <input type="date" id="rep-data-inicial" class="w-full bg-slate-50 border border-slate-200 rounded-lg text-sm px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-brand-500">
+                         </div>
+                         <div>
+                             <label class="block text-xs font-medium text-slate-500 mb-1">Data Final</label>
+                             <input type="date" id="rep-data-final" class="w-full bg-slate-50 border border-slate-200 rounded-lg text-sm px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-brand-500">
+                         </div>
+                         <div>
+                             <label class="block text-xs font-medium text-slate-500 mb-1">Nome do Item</label>
+                             <div class="relative">
+                                <input type="text" id="rep-nome" placeholder="Buscar por nome..." class="w-full bg-slate-50 border border-slate-200 rounded-lg text-sm px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-brand-500">
+                                <div id="rep-nome-results" class="autocomplete-results hidden absolute left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-lg text-slate-800 text-sm max-h-48 overflow-y-auto z-50"></div>
+                            </div>
+                         </div>
+                         <div>
+                             <label class="block text-xs font-medium text-slate-500 mb-1">Código do Item</label>
+                             <input type="text" id="rep-codigo" placeholder="Ex: MP... ou ID" class="w-full bg-slate-50 border border-slate-200 rounded-lg text-sm px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-brand-500">
+                         </div>
+                         <div>
+                             <label class="block text-xs font-medium text-slate-500 mb-1">Tipo de Movimentação</label>
+                             <select id="rep-tipo" class="w-full bg-slate-50 border border-slate-200 rounded-lg text-sm px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-brand-500">
+                                 <option value="TODOS">Todos</option>
+                                 <option value="ENTRADA">Apenas Entradas</option>
+                                 <option value="SAIDA">Apenas Saídas</option>
+                             </select>
+                         </div>
+                         <div class="grid grid-cols-2 gap-2">
+                             <div>
+                                 <label class="block text-xs font-medium text-slate-500 mb-1">Valor Mín. (R$)</label>
+                                 <input type="number" step="0.01" id="rep-valor-min" placeholder="0,00" class="w-full bg-slate-50 border border-slate-200 rounded-lg text-sm px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-brand-500">
+                             </div>
+                             <div>
+                                 <label class="block text-xs font-medium text-slate-500 mb-1">Valor Máx. (R$)</label>
+                                 <input type="number" step="0.01" id="rep-valor-max" placeholder="0,00" class="w-full bg-slate-50 border border-slate-200 rounded-lg text-sm px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-brand-500">
+                             </div>
+                         </div>
+                     </div>
+                     <div class="flex flex-col sm:flex-row gap-2 justify-end pt-2">
+                         <button onclick="limparFiltrosRelatorio()" class="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium text-sm rounded-lg transition-all">
+                             Limpar Filtros
+                         </button>
+                         <button onclick="loadRelatorio()" class="px-4 py-2.5 bg-brand-600 hover:bg-brand-700 text-white font-medium text-sm rounded-lg shadow-sm transition-all flex items-center gap-2">
+                             <i data-lucide="search" class="w-4 h-4"></i> Filtrar
+                         </button>
+                     </div>
+                 </div>
+
+
+<!-- Tabela de Resultado do Relatório -->
+                 <!-- Card de Análise Gráfica -->
+                 <div id="relatorio-chart-card" class="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm mt-6 hidden">
+                     <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+                         <h3 class="text-base font-bold text-slate-800">Análise de Tendência de Preços e Movimentações</h3>
+                         <div class="flex gap-2">
+                             <button type="button" data-chart-tab="preco" class="chart-tab px-3 py-1.5 rounded-full text-xs font-semibold bg-brand-600 text-white">Evolução de Preços</button>
+                             <button type="button" data-chart-tab="quantidade" class="chart-tab px-3 py-1.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 hover:bg-slate-200">Fluxo de Quantidades (Entradas/Saídas)</button>
+                         </div>
+                     </div>
+                     <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+                         <div id="chart-card-1" class="rounded-xl p-3 bg-emerald-50 text-emerald-700">
+                             <p id="chart-label-1" class="text-xs font-medium">Menor Preço Pago</p>
+                             <p id="chart-val-1" class="text-lg font-bold text-emerald-600">R$ 0,00</p>
+                         </div>
+                         <div id="chart-card-2" class="rounded-xl p-3 bg-rose-50 text-rose-700">
+                             <p id="chart-label-2" class="text-xs font-medium">Maior Preço Pago</p>
+                             <p id="chart-val-2" class="text-lg font-bold text-rose-600">R$ 0,00</p>
+                         </div>
+                         <div id="chart-card-3" class="rounded-xl p-3 bg-sky-50 text-sky-700">
+                             <p id="chart-label-3" class="text-xs font-medium">Custo Médio</p>
+                             <p id="chart-val-3" class="text-lg font-bold text-sky-600">R$ 0,00</p>
+                         </div>
+                     </div>
+                     <div class="relative w-full" style="height: 320px;">
+                         <canvas id="relatorio-chart"></canvas>
+                     </div>
+                 </div>
+<div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                     <div class="flex items-center justify-between p-4 border-b border-slate-100">
+                         <h3 class="text-sm font-semibold text-slate-700">Resultado Detalhado</h3>
+                         <button onclick="exportarRelatorioCSV()" class="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium rounded-lg shadow-sm flex items-center gap-1.5 transition-all">
+                             <i data-lucide="download" class="w-3.5 h-3.5"></i> Exportar para CSV / Excel
+                         </button>
+                     </div>
+                     <div class="overflow-x-auto w-full">
+                         <table class="w-full text-left text-sm">
+                             <thead class="bg-slate-50 border-b border-slate-200 text-xs text-slate-500 uppercase tracking-wider whitespace-nowrap">
+                                 <tr>
+                                     <th class="px-3 sm:px-6 py-3.5 font-semibold cursor-pointer select-none text-slate-600 hover:bg-slate-100 hover:text-brand-600 transition-colors" onclick="sortRelatorio('created_at')">Data/Hora <span id="sort-ind-created_at" class="ml-1 text-brand-600"></span></th>
+                                     <th class="px-3 sm:px-6 py-3.5 font-semibold cursor-pointer select-none text-slate-600 hover:bg-slate-100 hover:text-brand-600 transition-colors" onclick="sortRelatorio('codigo')">Código do Item <span id="sort-ind-codigo" class="ml-1 text-brand-600"></span></th>
+                                     <th class="px-3 sm:px-6 py-3.5 font-semibold cursor-pointer select-none text-slate-600 hover:bg-slate-100 hover:text-brand-600 transition-colors" onclick="sortRelatorio('titulo')">Nome do Item <span id="sort-ind-titulo" class="ml-1 text-brand-600"></span></th>
+                                     <th class="px-3 sm:px-6 py-3.5 font-semibold">Tipo</th>
+                                     <th class="px-3 sm:px-6 py-3.5 font-semibold text-right cursor-pointer select-none text-slate-600 hover:bg-slate-100 hover:text-brand-600 transition-colors" onclick="sortRelatorio('quantidade')">Quantidade <span id="sort-ind-quantidade" class="ml-1 text-brand-600"></span></th>
+                                     <th class="px-3 sm:px-6 py-3.5 font-semibold text-right cursor-pointer select-none text-slate-600 hover:bg-slate-100 hover:text-brand-600 transition-colors" onclick="sortRelatorio('valor_total')">Valor Total Pago <span id="sort-ind-valor_total" class="ml-1 text-brand-600"></span></th>
+                                     <th class="px-3 sm:px-6 py-3.5 font-semibold text-right cursor-pointer select-none text-slate-600 hover:bg-slate-100 hover:text-brand-600 transition-colors" onclick="sortRelatorio('custo_unitario')">Custo Unitário Calculado <span id="sort-ind-custo_unitario" class="ml-1 text-brand-600"></span></th>
+                                 </tr>
+                             </thead>
+                             <tbody id="relatorio-table-body" class="divide-y divide-slate-100">
+                                 <!-- Linhas renderizadas via JS -->
+                             </tbody>
+                         </table>
+                     </div>
+                     <div id="relatorio-empty" class="p-12 text-center hidden">
+                         <div class="w-12 h-12 rounded-full bg-slate-100 text-slate-400 mx-auto flex items-center justify-center mb-3">
+                             <i data-lucide="inbox" class="w-6 h-6"></i>
+                         </div>
+                         <h4 class="text-sm font-semibold text-slate-700">Nenhum registro encontrado</h4>
+                         <p class="text-xs text-slate-500 mt-1">Ajuste os filtros e tente novamente.</p>
+                     </div>
+                 </div>
+                                  
+</section>
+
+
             </main>
             </div>
 
@@ -493,7 +642,7 @@
                             </div>
                         </div>
 
-                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
                             <div>
                                 <label for="mov-qty" class="block text-xs font-medium text-slate-700 mb-1">Quantidade</label>
                                 <input type="text" inputmode="decimal" autocomplete="off" data-mask="quantity" id="mov-qty" placeholder="Ex: 50" class="mov-input w-full px-3 py-2.5 sm:py-2 bg-slate-50 border border-slate-300 rounded-lg">
@@ -501,6 +650,15 @@
                             <div id="mov-cost-container">
                                 <label for="mov-total-price" class="block text-xs font-medium text-slate-700 mb-1">Valor Total Pago (R$)</label>
                                 <input type="text" inputmode="numeric" autocomplete="off" data-mask="currency" id="mov-total-price" placeholder="R$ 0,00" class="mov-input w-full px-3 py-2.5 sm:py-2 bg-slate-50 border border-slate-300 rounded-lg">
+                            </div>
+                            <div>
+                                <label for="mov-date" class="block text-xs font-medium text-slate-700 mb-1">Data e Hora da Movimentação</label>
+                                <div class="relative">
+                                    <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400 pointer-events-none">
+                                        <i data-lucide="calendar-clock" class="w-4 h-4"></i>
+                                    </span>
+                                    <input type="datetime-local" id="mov-date" class="mov-input w-full pl-9 pr-3 py-2.5 sm:py-2 bg-slate-50 border border-slate-300 rounded-lg">
+                                </div>
                             </div>
                         </div>
 

@@ -16,6 +16,10 @@ body { font-family: 'Inter', sans-serif; }
     display: block;
 }
 
+/* Cabeçalhos clicáveis do relatório */
+th[onclick] { cursor: pointer; }
+th[onclick]:hover { background-color: #f1f5f9; color: #0369a1; }
+
 /* Transicoes de modais */
 [id^="modal-"] {
     opacity: 0;

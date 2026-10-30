@@ -53,3 +53,32 @@ Adicionar ou garantir os seguintes campos na tabela do Supabase:
 - [ ] **Fase 2:** Criar a migration/colunas de `email` e `telefone` na base de dados do Supabase.
 - [ ] **Fase 3:** Desenhar a interface do modal "Meu Perfil" no frontend.
 - [ ] **Fase 4:** Conectar o botão de redefinição de senha e configurar o envio de e-mails via Supabase / SMTP.
+
+📋 Novo Recurso: Ordens de Produção, Ficha Técnica e Controle de Perdas
+Agora o StockUnit Enterprise conta com um ciclo completo de produção: desde o cálculo de custos até o controle rigoroso do estoque no chão de fábrica!
+
+Veja como tudo isso funciona na prática:
+
+Cadastro e Custo por Porção:
+
+Você cadastra o que produz (como Brigadeiro Tradicional ou Kit de Potes) e define o rendimento.
+
+Adiciona os ingredientes e as embalagens. O sistema calcula automaticamente o Custo Total e o Custo Unitário por Porção com base nos preços atuais do estoque.
+
+Produção em Andamento (Estoque Reservado):
+
+Ao iniciar um lote (que pode durar dias), o sistema separa e bloqueia automaticamente os insumos necessários no estoque.
+
+Enquanto a produção estiver rodando, esses itens ficam protegidos e não podem ser vendidos ou usados em outras receitas, evitando furos no estoque.
+
+Imprevistos e Não Conformidades (Perdas):
+
+Aconteceu um acidente (um ingrediente caiu no chão, o lote queimou ou perdeu o ponto)?
+
+Com a produção em andamento, você pode registrar a Perda ou Desperdício com poucos cliques. O sistema dá baixa imediata do prejuízo, ajusta o custo real do lote ou cancela a ordem se o lote inteiro for perdido.
+
+Encerramento e Baixa Automática:
+
+Ao finalizar a produção, você informa se o rendimento foi exato ou se houve alguma variação.
+
+O sistema conclui a ordem, dá baixa definitiva nos insumos utilizados e gera todo o histórico rastreável com a justificativa exata daquela produção.
