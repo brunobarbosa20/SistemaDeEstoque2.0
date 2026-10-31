@@ -101,6 +101,14 @@
             .mov-seg-indicator, .mov-seg-btn, .mov-submit { transition: none !important; }
             #sidebar, #sidebar.sidebar-open, #sidebar-overlay { transition: none !important; }
         }
+
+        /* ===== Nova Compra (modal com várias linhas) ===== */
+        .purchase-grid { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:.75rem; }
+        @media (min-width: 768px) {
+            .purchase-grid { grid-template-columns:minmax(0, 2.4fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.3fr) 2.5rem; }
+        }
+        .pr-invalid { border-color:#f43f5e !important; box-shadow:0 0 0 3px rgba(244,63,94,.15) !important; }
+        #purchase-rows.is-saving { pointer-events:none; opacity:.6; }
     </style>
 </head>
 <body class="h-full text-slate-800 antialiased flex flex-col">
@@ -176,7 +184,7 @@
             <div id="sidebar-overlay" onclick="closeSidebar()" class="fixed inset-0 z-30 bg-slate-900/60 backdrop-blur-sm lg:hidden" aria-hidden="true"></div>
 
             <!-- Sidebar: gaveta deslizante no mobile, fixa no desktop -->
-            <aside id="sidebar" class="fixed inset-y-0 left-0 z-40 w-64 max-w-[85vw] overflow-y-auto bg-slate-900 text-white flex flex-col lg:static lg:z-auto lg:max-w-none lg:shrink-0">
+            <aside id="sidebar" class="fixed inset-y-0 left-0 z-40 w-64 max-w-[85vw] overflow-y-auto bg-slate-900 text-white flex flex-col lg:sticky lg:top-0 lg:h-screen lg:self-start lg:z-auto lg:max-w-none lg:shrink-0">
                 <div class="px-6 py-5 border-b border-slate-800 flex items-start justify-between gap-2">
                     <div>
                         <h1 class="text-lg font-bold">StockUnit</h1>
@@ -302,6 +310,11 @@
                             <option value="UN">Unidades (UN)</option>
                             <option value="ML">Mililitros (ML)</option>
                         </select>
+
+                        <button onclick="openNewPurchaseModal()" class="w-full sm:w-auto justify-center px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-medium text-sm rounded-lg shadow-sm shadow-emerald-600/30 flex items-center gap-2 transition-all shrink-0">
+                            <i data-lucide="shopping-cart" class="w-4 h-4"></i>
+                            <span>Nova Compra</span>
+                        </button>
 
                         <button onclick="openNewItemModal()" class="w-full sm:w-auto justify-center px-4 py-2.5 bg-brand-600 hover:bg-brand-700 text-white font-medium text-sm rounded-lg shadow-sm flex items-center gap-2 transition-all shrink-0">
                             <i data-lucide="plus" class="w-4 h-4"></i>
@@ -543,6 +556,64 @@
                         <button type="submit" class="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white text-xs font-semibold rounded-lg shadow-sm transition-all">Salvar Item</button>
                     </div>
                 </form>
+            </div>
+        </div>
+
+        <!-- Modal Nova Compra (múltiplos itens) -->
+        <div id="modal-new-purchase" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+            <div class="bg-white w-full max-w-4xl rounded-2xl shadow-2xl border border-slate-100 overflow-hidden flex flex-col max-h-[92vh]">
+                <div class="px-4 sm:px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+                    <div class="flex items-center gap-2 min-w-0">
+                        <div class="p-2 bg-emerald-100 text-emerald-700 rounded-lg shrink-0">
+                            <i data-lucide="shopping-cart" class="w-5 h-5"></i>
+                        </div>
+                        <div class="min-w-0">
+                            <h3 class="text-base font-bold text-slate-900">Nova Compra</h3>
+                            <p class="text-[11px] text-slate-500">Itens que ainda não existem no estoque serão cadastrados automaticamente.</p>
+                        </div>
+                    </div>
+                    <button type="button" onclick="closeModal('modal-new-purchase')" aria-label="Fechar" class="text-slate-400 hover:text-slate-600 p-1 rounded-lg">
+                        <i data-lucide="x" class="w-5 h-5"></i>
+                    </button>
+                </div>
+
+                <div id="purchase-scroll" class="p-4 sm:p-6 overflow-y-auto custom-scrollbar flex-1 space-y-3">
+                    <!-- Cabeçalho das colunas (apenas desktop) -->
+                    <div class="hidden md:block">
+                        <div class="purchase-grid text-[11px] font-semibold text-slate-500 uppercase tracking-wide">
+                            <span>Item</span>
+                            <span>Unidade</span>
+                            <span>Quantidade</span>
+                            <span>Valor total pago (R$)</span>
+                            <span></span>
+                        </div>
+                    </div>
+
+                    <!-- Linhas dinâmicas (geradas via JS) -->
+                    <div id="purchase-rows" class="space-y-3"></div>
+
+                    <button type="button" onclick="addPurchaseRow(true)" class="w-full sm:w-auto px-4 py-2 text-sm font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg flex items-center justify-center gap-2 transition-all">
+                        <i data-lucide="plus" class="w-4 h-4"></i>
+                        Adicionar outro item
+                    </button>
+                </div>
+
+                <div class="px-4 sm:px-6 py-4 bg-slate-50 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                    <div>
+                        <span class="block text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Valor Total Geral da Compra</span>
+                        <div class="flex items-baseline gap-2">
+                            <span id="purchase-total" class="text-2xl font-bold text-slate-900">R$ 0,00</span>
+                            <span id="purchase-count" class="text-xs text-slate-500">0 itens</span>
+                        </div>
+                    </div>
+                    <div class="flex gap-2 sm:justify-end">
+                        <button type="button" id="purchase-cancel" onclick="closeModal('modal-new-purchase')" class="flex-1 sm:flex-none px-4 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-200 rounded-lg transition-all">Cancelar</button>
+                        <button type="button" id="purchase-submit" onclick="finalizePurchase()" class="flex-1 sm:flex-none px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-lg shadow-sm flex items-center justify-center gap-2 transition-all">
+                            <i data-lucide="check" class="w-4 h-4"></i>
+                            <span id="purchase-submit-label">Finalizar Compra</span>
+                        </button>
+                    </div>
+                </div>
             </div>
         </div>
 

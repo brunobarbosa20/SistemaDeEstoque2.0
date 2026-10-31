@@ -779,6 +779,573 @@ async function handleCreateItemSubmit(event) {
     showToast('Item cadastrado com sucesso.', 'success');
 }
 
+// ===== Nova Compra (vários itens numa única compra) =====
+let purchaseRowSeq = 0;
+let purchaseSaving = false;
+const purchaseAc = { el: null, input: null, active: -1 };
+
+const PR_LABEL = 'md:hidden block text-[11px] font-semibold text-slate-500 uppercase tracking-wide mb-1';
+const PR_FIELD = 'mov-input w-full h-10 px-3 bg-white border border-slate-300 rounded-lg text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 disabled:bg-slate-100 disabled:text-slate-500 disabled:cursor-not-allowed';
+const PR_HINT = 'pr-hint mt-1 text-[11px] font-medium rounded-md px-2 py-0.5 border w-fit max-w-full';
+
+function normalizeName(s) {
+    return String(s || '').trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+// Mesma regra do cadastro manual: primeira letra maiúscula
+function formatItemName(s) {
+    const t = String(s || '').trim().replace(/\s+/g, ' ');
+    return t.charAt(0).toUpperCase() + t.slice(1);
+}
+
+function findItemByName(name) {
+    const key = normalizeName(name);
+    if (!key) return null;
+    return (itemsList || []).find(i => normalizeName(i.titulo || i.title || i.nome) === key) || null;
+}
+
+function openNewPurchaseModal() {
+    resetPurchaseForm();
+    openModal('modal-new-purchase');
+    setTimeout(() => {
+        const first = document.querySelector('#purchase-rows .pr-name');
+        if (first) first.focus();
+    }, 250);
+}
+
+function resetPurchaseForm() {
+    const wrap = document.getElementById('purchase-rows');
+    if (wrap) wrap.innerHTML = '';
+    hidePurchaseAutocomplete();
+    purchaseRowSeq = 0;
+    addPurchaseRow(false);
+    updatePurchaseTotals();
+}
+
+function addPurchaseRow(focus) {
+    const wrap = document.getElementById('purchase-rows');
+    if (!wrap) return;
+    purchaseRowSeq++;
+
+    const row = document.createElement('div');
+    row.className = 'purchase-row purchase-grid items-start p-3 md:p-0 border border-slate-200 md:border-0 rounded-xl bg-slate-50/60 md:bg-transparent';
+    row.innerHTML = `
+        <div class="col-span-2 md:col-span-1 min-w-0">
+            <label class="${PR_LABEL}">Item</label>
+            <div class="pr-new-wrap relative">
+                <input type="text" class="pr-name ${PR_FIELD}" placeholder="Digite ou selecione o item" autocomplete="off" aria-label="Item">
+                <button type="button" class="pr-new-btn hidden absolute right-2 top-1/2 -translate-y-1/2 w-6 h-6 items-center justify-center rounded-full text-amber-500 hover:text-amber-600 focus:outline-none focus:ring-2 focus:ring-amber-400" aria-label="Aviso: item novo" aria-expanded="false">
+                    <i data-lucide="alert-circle" class="w-5 h-5 pointer-events-none"></i>
+                </button>
+                <div role="tooltip" class="pr-new-tip hidden absolute right-0 top-full mt-1.5 z-20 w-64 max-w-[85vw] px-3 py-2 rounded-lg bg-slate-800 text-white text-xs leading-snug shadow-lg">Item novo — selecione a unidade; ele será cadastrado automaticamente.</div>
+            </div>
+            <div class="${PR_HINT} hidden"></div>
+        </div>
+        <div class="min-w-0">
+            <label class="${PR_LABEL}">Unidade</label>
+            <select class="pr-unit ${PR_FIELD}" aria-label="Unidade de medida">
+                <option value="" selected>Selecione...</option>
+                <option value="GR">GR - Gramas</option>
+                <option value="UN">UN - Unidades</option>
+                <option value="ML">ML - Mililitros</option>
+            </select>
+            <p class="pr-unit-msg hidden mt-1 text-[11px] font-semibold text-rose-600">Selecione a unidade</p>
+        </div>
+        <div class="min-w-0">
+            <label class="${PR_LABEL}">Quantidade</label>
+            <input type="text" inputmode="decimal" autocomplete="off" data-mask="quantity" class="pr-qty ${PR_FIELD}" placeholder="Ex: 500" aria-label="Quantidade">
+        </div>
+        <div class="col-span-2 md:col-span-1 min-w-0">
+            <label class="${PR_LABEL}">Valor total pago (R$)</label>
+            <input type="text" inputmode="numeric" autocomplete="off" data-mask="currency" class="pr-total ${PR_FIELD}" placeholder="R$ 0,00" aria-label="Valor total pago">
+            <p class="pr-cost hidden mt-1 text-[11px] text-slate-500"></p>
+        </div>
+        <div class="col-span-2 md:col-span-1">
+            <button type="button" class="pr-remove w-full md:w-10 h-10 flex items-center justify-center gap-2 text-sm font-medium text-slate-500 hover:text-rose-600 hover:bg-rose-50 border border-slate-200 md:border-transparent rounded-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-slate-500" title="Remover item" aria-label="Remover item da compra">
+                <i data-lucide="trash-2" class="w-4 h-4"></i>
+                <span class="md:hidden">Remover item</span>
+            </button>
+        </div>
+    `;
+    wrap.appendChild(row);
+    if (window.lucide) lucide.createIcons();
+    refreshPurchaseUI();
+
+    if (focus) {
+        row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        row.querySelector('.pr-name').focus({ preventScroll: true });
+    }
+}
+
+// Preenche/bloqueia a unidade e mostra o aviso conforme o item exista ou não no banco
+function syncPurchaseRowItem(row) {
+    const name = row.querySelector('.pr-name').value.trim();
+    const unitEl = row.querySelector('.pr-unit');
+    const hint = row.querySelector('.pr-hint');
+    const item = findItemByName(name);
+
+    // Se a unidade estava preenchida automaticamente (item existente), ela volta a ficar em branco
+    if (unitEl.dataset.autofilled === '1' && !item) {
+        unitEl.value = '';
+        delete unitEl.dataset.autofilled;
+    }
+    setPurchaseUnitError(row, false);
+
+    const nameEl = row.querySelector('.pr-name');
+    const newBtn = row.querySelector('.pr-new-btn');
+    const isNew = !!name && !item;
+    // Ícone "!" só aparece para item novo; o aviso amarelo fixo foi removido
+    newBtn.classList.toggle('hidden', !isNew);
+    newBtn.classList.toggle('flex', isNew);
+    nameEl.style.paddingRight = isNew ? '2.25rem' : '';
+    if (!isNew) closePurchaseNewTip(row);
+
+    if (!name) {
+        unitEl.disabled = false;
+        hint.classList.add('hidden');
+        return;
+    }
+    if (item) {
+        unitEl.value = item.unidade;
+        unitEl.disabled = true;
+        unitEl.dataset.autofilled = '1';
+        hint.className = PR_HINT + ' bg-emerald-50 text-emerald-700 border-emerald-200';
+        hint.textContent = 'Item cadastrado · saldo atual: ' + Number(item.quantidade || 0).toLocaleString('pt-BR') + ' ' + item.unidade;
+    } else {
+        unitEl.disabled = false;
+        hint.classList.add('hidden');
+    }
+}
+
+// ----- Tooltip do ícone "!" (item novo): hover no desktop, toque/clique no mobile -----
+function closePurchaseNewTip(row) {
+    const tip = row && row.querySelector('.pr-new-tip');
+    const btn = row && row.querySelector('.pr-new-btn');
+    if (tip) tip.classList.add('hidden');
+    if (btn) btn.setAttribute('aria-expanded', 'false');
+}
+
+function togglePurchaseNewTip(row, show) {
+    const tip = row.querySelector('.pr-new-tip');
+    const btn = row.querySelector('.pr-new-btn');
+    const open = typeof show === 'boolean' ? show : tip.classList.contains('hidden');
+    tip.classList.toggle('hidden', !open);
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+
+// Hover (apenas dispositivos com mouse)
+document.addEventListener('mouseover', (e) => {
+    if (!window.matchMedia('(hover: hover)').matches) return;
+    const btn = e.target.closest && e.target.closest('.pr-new-btn');
+    if (btn) togglePurchaseNewTip(btn.closest('.purchase-row'), true);
+});
+document.addEventListener('mouseout', (e) => {
+    if (!window.matchMedia('(hover: hover)').matches) return;
+    const btn = e.target.closest && e.target.closest('.pr-new-btn');
+    if (btn && !btn.contains(e.relatedTarget)) closePurchaseNewTip(btn.closest('.purchase-row'));
+});
+
+// Clique/toque alterna; clicar fora fecha
+document.addEventListener('click', (e) => {
+    const btn = e.target.closest && e.target.closest('.pr-new-btn');
+    document.querySelectorAll('.purchase-row').forEach(r => {
+        if (!btn || r !== btn.closest('.purchase-row')) closePurchaseNewTip(r);
+    });
+    if (!btn) return;
+    const row = btn.closest('.purchase-row');
+    // No desktop o hover já abriu: o clique mantém aberto; no toque alterna
+    if (window.matchMedia('(hover: hover)').matches) togglePurchaseNewTip(row, true);
+    else togglePurchaseNewTip(row);
+});
+
+// Destaque visual (borda vermelha + aviso) no campo de unidade
+function setPurchaseUnitError(row, show) {
+    const unitEl = row.querySelector('.pr-unit');
+    const msg = row.querySelector('.pr-unit-msg');
+    unitEl.classList.toggle('pr-invalid', !!show);
+    if (msg) msg.classList.toggle('hidden', !show);
+}
+
+function updatePurchaseRowCost(row) {
+    const qty = parseQuantityInput(row.querySelector('.pr-qty').value);
+    const total = parseCurrencyInput(row.querySelector('.pr-total').value);
+    const unit = row.querySelector('.pr-unit').value.toLowerCase();
+    const el = row.querySelector('.pr-cost');
+    if (qty > 0 && total > 0) {
+        el.textContent = 'Custo unitário: ' + formatUnitCost(total / qty) + (unit ? ' / ' + unit : '');
+        el.classList.remove('hidden');
+    } else {
+        el.classList.add('hidden');
+    }
+}
+
+function updatePurchaseTotals() {
+    const rows = document.querySelectorAll('#purchase-rows .purchase-row');
+    let cents = 0;
+    let count = 0;
+    rows.forEach(row => {
+        cents += Math.round(parseCurrencyInput(row.querySelector('.pr-total').value) * 100);
+        if (row.querySelector('.pr-name').value.trim()) count++;
+    });
+    const totalEl = document.getElementById('purchase-total');
+    const countEl = document.getElementById('purchase-count');
+    if (totalEl) totalEl.textContent = formatCurrency(cents / 100);
+    if (countEl) countEl.textContent = count + (count === 1 ? ' item' : ' itens');
+}
+
+// Mantém pelo menos uma linha na compra
+function refreshPurchaseUI() {
+    const rows = document.querySelectorAll('#purchase-rows .purchase-row');
+    rows.forEach(r => { r.querySelector('.pr-remove').disabled = rows.length <= 1; });
+}
+
+// ----- Autocomplete (mesma fonte de dados e visual do autocomplete existente) -----
+function ensurePurchaseAc() {
+    if (purchaseAc.el) return purchaseAc.el;
+    const el = document.createElement('div');
+    el.id = 'purchase-autocomplete';
+    // Fica no <body> com position: fixed para não ser cortado pela área rolável do modal
+    el.className = 'hidden fixed bg-white border border-slate-200 rounded-xl shadow-lg text-slate-800 text-sm max-h-48 overflow-y-auto z-[70]';
+    el.addEventListener('mousedown', (e) => {
+        e.preventDefault(); // mantém o foco no campo
+        const opt = e.target.closest('.autocomplete-item');
+        if (opt) pickPurchaseName(opt.getAttribute('data-value'));
+    });
+    document.body.appendChild(el);
+    purchaseAc.el = el;
+    return el;
+}
+
+function showPurchaseAutocomplete(input) {
+    const el = ensurePurchaseAc();
+    // Campo vazio: a lista permanece oculta (nunca abre sozinha)
+    if (!input.value.trim()) {
+        hidePurchaseAutocomplete();
+        return;
+    }
+    const q = normalizeName(input.value);
+    const names = [];
+    const seen = new Set();
+    (itemsList || []).forEach(item => {
+        const name = (item.titulo || item.title || item.nome || '').trim();
+        const key = name.toLowerCase();
+        if (!name || seen.has(key)) return;
+        if (q && !normalizeName(name).includes(q)) return;
+        seen.add(key);
+        names.push(name);
+    });
+    // nada a sugerir, ou o texto já é exatamente o único resultado
+    if (names.length === 0 || (names.length === 1 && normalizeName(names[0]) === q)) {
+        hidePurchaseAutocomplete();
+        return;
+    }
+    el.innerHTML = names.map(n => '<div class="autocomplete-item hover:bg-brand-50 hover:text-brand-700 cursor-pointer p-2.5" data-value="' + escapeHtml(n) + '">' + escapeHtml(n) + '</div>').join('');
+    purchaseAc.input = input;
+    purchaseAc.active = -1;
+
+    const r = input.getBoundingClientRect();
+    el.style.left = r.left + 'px';
+    el.style.width = r.width + 'px';
+    el.style.top = (r.bottom + 4) + 'px';
+    el.classList.remove('hidden');
+    const h = el.offsetHeight;
+    if (r.bottom + 4 + h > window.innerHeight - 8 && r.top - 4 - h > 8) {
+        el.style.top = (r.top - 4 - h) + 'px'; // abre para cima se faltar espaço
+    }
+}
+
+function hidePurchaseAutocomplete() {
+    if (purchaseAc.el) purchaseAc.el.classList.add('hidden');
+    purchaseAc.input = null;
+    purchaseAc.active = -1;
+}
+
+function pickPurchaseName(value) {
+    const input = purchaseAc.input;
+    if (!input) return;
+    const row = input.closest('.purchase-row');
+    input.value = value;
+    input.classList.remove('pr-invalid');
+    hidePurchaseAutocomplete();
+    syncPurchaseRowItem(row);
+    updatePurchaseRowCost(row);
+    updatePurchaseTotals();
+    row.querySelector('.pr-qty').focus(); // segue o fluxo: próximo campo
+}
+
+function movePurchaseAcActive(delta) {
+    const opts = purchaseAc.el.querySelectorAll('.autocomplete-item');
+    if (!opts.length) return;
+    const n = opts.length;
+    purchaseAc.active = purchaseAc.active < 0 ? (delta > 0 ? 0 : n - 1) : (purchaseAc.active + delta + n) % n;
+    opts.forEach((o, i) => o.classList.toggle('bg-brand-50', i === purchaseAc.active));
+    opts[purchaseAc.active].scrollIntoView({ block: 'nearest' });
+}
+
+// ----- Eventos (delegados: as linhas são criadas dinamicamente) -----
+document.addEventListener('input', (e) => {
+    const t = e.target;
+    const row = t.closest && t.closest('.purchase-row');
+    if (!row) return;
+    t.classList.remove('pr-invalid');
+    if (t.classList.contains('pr-name')) {
+        syncPurchaseRowItem(row);
+        showPurchaseAutocomplete(t);
+    }
+    updatePurchaseRowCost(row);
+    updatePurchaseTotals();
+});
+
+document.addEventListener('change', (e) => {
+    const t = e.target;
+    const row = t.closest && t.closest('.purchase-row');
+    if (!row) return;
+    t.classList.remove('pr-invalid');
+    if (t.classList.contains('pr-unit')) setPurchaseUnitError(row, false);
+    updatePurchaseRowCost(row);
+});
+
+// A lista NÃO abre ao focar/abrir o modal; só ao clicar no campo (com texto) ou digitar
+document.addEventListener('click', (e) => {
+    if (e.target.classList && e.target.classList.contains('pr-name')) showPurchaseAutocomplete(e.target);
+});
+
+document.addEventListener('focusout', (e) => {
+    if (e.target.classList && e.target.classList.contains('pr-name')) hidePurchaseAutocomplete();
+});
+
+document.addEventListener('keydown', (e) => {
+    const t = e.target;
+    if (!t.classList || !t.classList.contains('pr-name')) return;
+    const open = purchaseAc.el && !purchaseAc.el.classList.contains('hidden') && purchaseAc.input === t;
+    if (!open) {
+        if (e.key === 'ArrowDown') showPurchaseAutocomplete(t);
+        return;
+    }
+    if (e.key === 'ArrowDown') { e.preventDefault(); movePurchaseAcActive(1); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); movePurchaseAcActive(-1); }
+    else if (e.key === 'Escape') { e.preventDefault(); hidePurchaseAutocomplete(); }
+    else if (e.key === 'Enter' && purchaseAc.active >= 0) {
+        e.preventDefault();
+        const opt = purchaseAc.el.querySelectorAll('.autocomplete-item')[purchaseAc.active];
+        if (opt) pickPurchaseName(opt.getAttribute('data-value'));
+    }
+});
+
+document.addEventListener('click', (e) => {
+    const btn = e.target.closest && e.target.closest('.pr-remove');
+    if (!btn || btn.disabled) return;
+    const row = btn.closest('.purchase-row');
+    if (!row) return;
+    hidePurchaseAutocomplete();
+    row.remove();
+    refreshPurchaseUI();
+    updatePurchaseTotals();
+});
+
+// A lista flutuante acompanha o campo: se a tela rolar/redimensionar, fecha
+document.addEventListener('scroll', (e) => {
+    if (purchaseAc.el && e.target !== purchaseAc.el) hidePurchaseAutocomplete();
+}, true);
+window.addEventListener('resize', hidePurchaseAutocomplete);
+
+// ----- Validação -----
+function collectPurchaseEntries() {
+    const rows = Array.from(document.querySelectorAll('#purchase-rows .purchase-row'));
+    const entries = [];
+    let firstInvalid = null;
+    let message = '';
+    const flag = (el, msg) => {
+        el.classList.add('pr-invalid');
+        if (el.classList.contains('pr-unit')) setPurchaseUnitError(el.closest('.purchase-row'), true);
+        if (!firstInvalid) { firstInvalid = el; message = msg; }
+    };
+
+    rows.forEach((row, idx) => {
+        const nameEl = row.querySelector('.pr-name');
+        const unitEl = row.querySelector('.pr-unit');
+        const qtyEl = row.querySelector('.pr-qty');
+        const totalEl = row.querySelector('.pr-total');
+        const rawName = nameEl.value.trim();
+
+        // linha totalmente vazia é ignorada
+        if (!rawName && !qtyEl.value.trim() && !totalEl.value.trim()) return;
+
+        const n = idx + 1;
+        const qty = parseQuantityInput(qtyEl.value);
+        const total = parseCurrencyInput(totalEl.value);
+        if (!rawName) flag(nameEl, 'Linha ' + n + ': informe o item.');
+        // Item novo (não cadastrado): a unidade de medida é obrigatória
+        if (rawName && !findItemByName(rawName) && !unitEl.value) {
+            flag(unitEl, 'Linha ' + n + ': selecione a unidade de medida do item novo "' + formatItemName(rawName) + '".');
+        }
+        if (qty <= 0) flag(qtyEl, 'Linha ' + n + ': informe uma quantidade maior que zero.');
+        if (total <= 0) flag(totalEl, 'Linha ' + n + ': informe o valor total pago.');
+
+        entries.push({ row, rowNumber: n, name: formatItemName(rawName), unit: unitEl.value, qty, total });
+    });
+
+    // O mesmo item novo em duas linhas precisa ter a mesma unidade
+    const newUnits = new Map();
+    entries.forEach(en => {
+        if (!en.name || !en.unit || findItemByName(en.name)) return;
+        const key = normalizeName(en.name);
+        const prev = newUnits.get(key);
+        if (!prev) newUnits.set(key, en);
+        else if (prev.unit !== en.unit) {
+            flag(en.row.querySelector('.pr-unit'), 'Linha ' + en.rowNumber + ': "' + en.name + '" aparece com unidades diferentes.');
+        }
+    });
+
+    return { entries, firstInvalid, message };
+}
+
+// ----- Gravação -----
+// Grava UM item da compra. Retorna true se o item foi criado agora.
+async function savePurchaseEntry(entry, createdAt) {
+    const unitCost = entry.total / entry.qty;
+    const existing = findItemByName(entry.name);
+
+    if (existing) {
+        const oldStock = Number(existing.quantidade) || 0;
+        const oldCost = Number(existing.custo_medio) || 0;
+        const oldStatus = existing.status;
+        const newStock = oldStock + entry.qty;
+        const newAvg = ((oldStock * oldCost) + entry.total) / newStock; // custo médio ponderado
+
+        const upd = await supabaseClient.from('itens').update({
+            quantidade: newStock,
+            custo_medio: newAvg,
+            status: 'COM MOVIMENTAÇÕES'
+        }).eq('id', existing.id);
+        if (upd.error) throw upd.error;
+
+        const hist = await supabaseClient.from('historico').insert([{
+            item_id: existing.id,
+            user_id: currentUser.id,
+            tipo: 'ENTRADA',
+            quantidade: entry.qty,
+            valor_total: entry.total,
+            custo_unitario: unitCost,
+            created_at: createdAt
+        }]);
+        if (hist.error) {
+            // desfaz o saldo para não ficar um item atualizado sem histórico
+            await supabaseClient.from('itens').update({ quantidade: oldStock, custo_medio: oldCost, status: oldStatus }).eq('id', existing.id);
+            throw hist.error;
+        }
+
+        existing.quantidade = newStock;
+        existing.custo_medio = newAvg;
+        existing.status = 'COM MOVIMENTAÇÕES';
+        return false;
+    }
+
+    // Item novo: cadastra automaticamente
+    const ins = await supabaseClient.from('itens').insert([{
+        id: generateId(),
+        codigo: generateItemCode(),
+        user_id: currentUser.id,
+        titulo: entry.name,
+        unidade: entry.unit,
+        quantidade: entry.qty,
+        custo_medio: unitCost,
+        status: 'COM MOVIMENTAÇÕES'
+    }]).select().single();
+    if (ins.error) throw ins.error;
+    const created = ins.data;
+
+    const hist = await supabaseClient.from('historico').insert([{
+        item_id: created.id,
+        user_id: currentUser.id,
+        tipo: 'ENTRADA',
+        quantidade: entry.qty,
+        valor_total: entry.total,
+        custo_unitario: unitCost,
+        created_at: createdAt
+    }]);
+    if (hist.error) {
+        await supabaseClient.from('itens').delete().eq('id', created.id);
+        throw hist.error;
+    }
+
+    // entra na lista em memória: se o mesmo item aparecer noutra linha, ele é tratado como existente
+    itemsList.unshift(normalizeItem(created));
+    return true;
+}
+
+function setPurchaseSaving(saving) {
+    purchaseSaving = saving;
+    const submit = document.getElementById('purchase-submit');
+    const cancel = document.getElementById('purchase-cancel');
+    const label = document.getElementById('purchase-submit-label');
+    const rows = document.getElementById('purchase-rows');
+    if (submit) submit.disabled = saving;
+    if (cancel) cancel.disabled = saving;
+    if (label) label.textContent = saving ? 'Salvando...' : 'Finalizar Compra';
+    if (rows) rows.classList.toggle('is-saving', saving);
+}
+
+async function finalizePurchase() {
+    if (purchaseSaving) return;
+    if (!supabaseClient || !currentUser) {
+        showToast('Supabase não disponível.', 'error');
+        return;
+    }
+
+    const { entries, firstInvalid, message } = collectPurchaseEntries();
+    if (firstInvalid) {
+        showToast(message, 'error');
+        firstInvalid.focus();
+        return;
+    }
+    if (entries.length === 0) {
+        showToast('Adicione pelo menos um item à compra.', 'error');
+        return;
+    }
+
+    setPurchaseSaving(true);
+    const purchaseDate = new Date().toISOString(); // mesma data/hora para todos os itens da compra
+    const done = [];
+    let createdCount = 0;
+    let current = null;
+
+    try {
+        for (const entry of entries) {
+            current = entry;
+            if (await savePurchaseEntry(entry, purchaseDate)) createdCount++;
+            done.push(entry);
+        }
+    } catch (err) {
+        console.error(err);
+        const reason = err && err.message ? err.message : String(err);
+        // Sincroniza com o banco e remove da lista o que já foi gravado, para não duplicar ao tentar de novo
+        await loadItems();
+        await loadHomeDashboard();
+        done.forEach(en => en.row.remove());
+        refreshPurchaseUI();
+        updatePurchaseTotals();
+        setPurchaseSaving(false);
+        if (done.length > 0) {
+            showToast('Compra parcial: ' + done.length + ' de ' + entries.length + ' item(ns) gravado(s). Falha em "' + (current ? current.name : '?') + '": ' + reason + '. Os já gravados saíram da lista; corrija e finalize novamente.', 'error');
+        } else {
+            showToast('Erro ao salvar a compra: ' + reason, 'error');
+        }
+        return;
+    }
+
+    const totalCents = entries.reduce((acc, en) => acc + Math.round(en.total * 100), 0);
+    closeModal('modal-new-purchase');
+    resetPurchaseForm();
+    setPurchaseSaving(false);
+    await loadItems();          // atualiza tabela, cards e autocomplete
+    await loadHomeDashboard();  // atualiza atividades recentes
+
+    let msg = 'Compra registrada: ' + entries.length + (entries.length === 1 ? ' item' : ' itens') + ' · ' + formatCurrency(totalCents / 100);
+    if (createdCount > 0) msg += ' (' + createdCount + (createdCount === 1 ? ' novo cadastrado' : ' novos cadastrados') + ')';
+    showToast(msg, 'success');
+}
+
 function openItemDetailsModal(id) {
 
     const item = itemsList.find(i => String(i.id) === String(id));
@@ -1388,6 +1955,12 @@ function setupAutocomplete(inputId, resultsId) {
     if (!input || !results) return;
     function renderList(filter) {
         const q = (filter || '').trim().toLowerCase();
+        // Campo vazio: lista oculta
+        if (!q) {
+            results.classList.add('hidden');
+            results.innerHTML = '';
+            return;
+        }
         const names = [];
         const seen = new Set();
         (itemsList || []).forEach(item => {
@@ -1407,7 +1980,8 @@ function setupAutocomplete(inputId, resultsId) {
         results.classList.remove('hidden');
     }
     input.addEventListener('input', () => renderList(input.value));
-    input.addEventListener('focus', () => renderList(input.value));
+    // Não abre ao focar; só ao clicar no campo (com texto) ou digitar
+    input.addEventListener('click', () => renderList(input.value));
     results.addEventListener('click', (e) => {
         const item = e.target.closest('.autocomplete-item');
         if (item) {
