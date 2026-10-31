@@ -209,8 +209,13 @@ function updateMovPreview() {
     const base = 'text-xs font-medium rounded-lg px-3 py-2 border ';
     let text, cls;
     if (type === 'IN') {
-        const total = parseCurrencyInput((document.getElementById('mov-total-price') || {}).value);
-        text = (total > 0 ? 'Custo desta entrada: ' + formatUnitCost(total / qty) + ' / ' + un.toLowerCase() + ' · ' : '') +
+        const raw = parseCurrencyInput((document.getElementById('mov-total-price') || {}).value);
+        const isUnitPrice = !!(document.getElementById('mov-unit-price-toggle') || {}).checked;
+        const total = calcEntryTotal(qty, raw, un, isUnitPrice);
+        text = (total > 0
+                    ? (isUnitPrice ? 'Total calculado: ' + formatCurrency(total) + ' · ' : '') +
+                      'Custo desta entrada: ' + formatUnitCost(total / qty) + ' / ' + un.toLowerCase() + ' · '
+                    : '') +
                'Novo saldo: ' + fmt(saldo + qty);
         cls = 'bg-emerald-50 text-emerald-800 border-emerald-200';
     } else if (qty > saldo) {
@@ -226,6 +231,13 @@ function updateMovPreview() {
 
 document.addEventListener('input', (e) => {
     if (e.target && (e.target.id === 'mov-qty' || e.target.id === 'mov-total-price')) updateMovPreview();
+});
+
+document.addEventListener('change', (e) => {
+    if (e.target && e.target.id === 'mov-unit-price-toggle') {
+        updateMovPriceLabel();
+        updateMovPreview();
+    }
 });
 
 function showSection(section) {
@@ -293,6 +305,20 @@ function closeModal(id) {
     }, 200);
 }
 
+// Total real de uma entrada. Valor unitário: GR/ML referem-se a KG/Litro (÷1000); UN é direto.
+function calcEntryTotal(qty, rawValue, unit, isUnitPrice) {
+    if (!isUnitPrice) return rawValue;
+    const u = String(unit || '').toUpperCase();
+    return (u === 'GR' || u === 'ML') ? (qty / 1000) * rawValue : qty * rawValue;
+}
+
+// Rótulo do campo de valor na janela de movimentação do item
+function updateMovPriceLabel() {
+    const toggle = document.getElementById('mov-unit-price-toggle');
+    const label = document.getElementById('mov-price-label');
+    if (label) label.textContent = (toggle && toggle.checked) ? 'Valor Unitário (R$)' : 'Valor Total Pago (R$)';
+}
+
 function toggleMovCostField() {
     const type = document.getElementById('mov-type').value === 'IN' ? 'ENTRADA' : 'SAIDA';
     const container = document.getElementById('mov-cost-container');
@@ -310,7 +336,10 @@ function toggleMovCostField() {
             input.disabled = true;
             input.readOnly = true;
         }
+        const unitToggle = document.getElementById('mov-unit-price-toggle');
+        if (unitToggle) unitToggle.checked = false;
     }
+    updateMovPriceLabel();
 }
 
 try {
@@ -642,8 +671,10 @@ function openNewItemModal() {
     document.getElementById('movement-fields').classList.add('hidden');
     document.getElementById('new-quantity').value = '';
     document.getElementById('new-total-cost').value = '';
+    document.getElementById('new-unit-price-toggle').checked = false;
     const preview = document.getElementById('new-calculated-preview');
     if (preview) preview.classList.add('hidden');
+    calculateNewItemUnitPreview(); // garante o rótulo "Valor Total Pago (R$)" ao abrir
     openModal('modal-new-item');
     if (window.lucide) lucide.createIcons();
 }
@@ -657,14 +688,22 @@ function toggleMovementFields() {
 
 function calculateNewItemUnitPreview() {
     const qty = parseQuantityInput(document.getElementById('new-quantity').value);
-    const cost = parseCurrencyInput(document.getElementById('new-total-cost').value);
-
-
+    const rawCost = parseCurrencyInput(document.getElementById('new-total-cost').value);
+    const isUnitPrice = document.getElementById('new-unit-price-toggle').checked;
+    const unit = (document.getElementById('new-unit') || {}).value;
+    const label = document.getElementById('new-price-label');
     const preview = document.getElementById('new-calculated-preview');
+
+    // O rótulo é atualizado sempre, independente da prévia
+    if (label) label.textContent = isUnitPrice ? 'Valor Unitário (R$)' : 'Valor Total Pago (R$)';
+
     if (!preview) return;
-    if (qty > 0 && cost > 0) {
-        const unitCost = cost / qty;
-        preview.textContent = 'Custo unitário: ' + formatUnitCost(unitCost);
+
+    if (qty > 0 && rawCost > 0) {
+        const total = calcEntryTotal(qty, rawCost, unit, isUnitPrice);
+        preview.textContent = isUnitPrice
+            ? 'Custo unitário: ' + formatUnitCost(total / qty) + ' · Total calculado: ' + formatCurrency(total)
+            : 'Custo unitário: ' + formatUnitCost(total / qty);
         preview.classList.remove('hidden');
     } else {
         preview.classList.add('hidden');
@@ -673,6 +712,12 @@ function calculateNewItemUnitPreview() {
 
 document.addEventListener('input', (e) => {
     if (e.target && (e.target.id === 'new-quantity' || e.target.id === 'new-total-cost')) {
+        calculateNewItemUnitPreview();
+    }
+});
+
+document.addEventListener('change', (e) => {
+    if (e.target && (e.target.id === 'new-unit-price-toggle' || e.target.id === 'new-unit')) {
         calculateNewItemUnitPreview();
     }
 });
@@ -709,17 +754,25 @@ async function handleCreateItemSubmit(event) {
 
     let current_stock = 0;
     let avg_unit_cost = 0;
+    let initial_total = 0;
     let status = 'SEM MOVIMENTAÇÕES';
 
     if (hasMovement) {
         const qty = parseQuantityInput(document.getElementById('new-quantity').value);
-        const cost = parseCurrencyInput(document.getElementById('new-total-cost').value);
+        const rawCost = parseCurrencyInput(document.getElementById('new-total-cost').value);
+        const isUnitPrice = document.getElementById('new-unit-price-toggle').checked;
+
         if (qty <= 0) {
             showToast('Quantidade inválida.', 'error');
             return;
         }
+
         current_stock = qty;
-        avg_unit_cost = cost / qty;
+        
+        // Total real da entrada (valor unitário em GR/ML é por 1.000) e custo por unidade base
+        initial_total = calcEntryTotal(qty, rawCost, unit, isUnitPrice);
+        avg_unit_cost = qty > 0 ? initial_total / qty : 0;
+        
         status = 'COM MOVIMENTAÇÕES';
     }
 
@@ -753,13 +806,14 @@ async function handleCreateItemSubmit(event) {
 
             // Se o item foi criado com uma entrada inicial, regista também no histórico
             if (hasMovement && current_stock > 0) {
-                const totalCostVal = parseCurrencyInput(document.getElementById('new-total-cost').value);
+                const totalCostVal = initial_total;
+
                 await supabaseClient.from('historico').insert([{
                     item_id: newItem.id,
                     user_id: currentUser.id,
                     tipo: 'ENTRADA',
                     quantidade: Number(current_stock),
-                    valor_total: totalCostVal,
+                    valor_total: totalCostVal, // Agora vai registar R$ 10,00 corretamente!
                     custo_unitario: Number(avg_unit_cost)
                 }]);
             }
@@ -784,7 +838,7 @@ let purchaseRowSeq = 0;
 let purchaseSaving = false;
 const purchaseAc = { el: null, input: null, active: -1 };
 
-const PR_LABEL = 'md:hidden block text-[11px] font-semibold text-slate-500 uppercase tracking-wide mb-1';
+const PR_LABEL = 'block h-4 leading-4 text-[11px] font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap mb-1';
 const PR_FIELD = 'mov-input w-full h-10 px-3 bg-white border border-slate-300 rounded-lg text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 disabled:bg-slate-100 disabled:text-slate-500 disabled:cursor-not-allowed';
 const PR_HINT = 'pr-hint mt-1 text-[11px] font-medium rounded-md px-2 py-0.5 border w-fit max-w-full';
 
@@ -843,12 +897,15 @@ function addPurchaseRow(focus) {
         </div>
         <div class="min-w-0">
             <label class="${PR_LABEL}">Unidade</label>
-            <select class="pr-unit ${PR_FIELD}" aria-label="Unidade de medida">
-                <option value="" selected>Selecione...</option>
-                <option value="GR">GR - Gramas</option>
-                <option value="UN">UN - Unidades</option>
-                <option value="ML">ML - Mililitros</option>
-            </select>
+            <div class="relative">
+                <select class="pr-unit ${PR_FIELD} appearance-none cursor-pointer pr-8 bg-white" aria-label="Unidade de medida">
+                    <option value="" selected>Selecione...</option>
+                    <option value="GR">GR - Gramas</option>
+                    <option value="UN">UN - Unidades</option>
+                    <option value="ML">ML - Mililitros</option>
+                </select>
+                <span class="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400 text-xs">▼</span>
+            </div>
             <p class="pr-unit-msg hidden mt-1 text-[11px] font-semibold text-rose-600">Selecione a unidade</p>
         </div>
         <div class="min-w-0">
@@ -856,11 +913,17 @@ function addPurchaseRow(focus) {
             <input type="text" inputmode="decimal" autocomplete="off" data-mask="quantity" class="pr-qty ${PR_FIELD}" placeholder="Ex: 500" aria-label="Quantidade">
         </div>
         <div class="col-span-2 md:col-span-1 min-w-0">
-            <label class="${PR_LABEL}">Valor total pago (R$)</label>
-            <input type="text" inputmode="numeric" autocomplete="off" data-mask="currency" class="pr-total ${PR_FIELD}" placeholder="R$ 0,00" aria-label="Valor total pago">
-            <p class="pr-cost hidden mt-1 text-[11px] text-slate-500"></p>
+            <div class="flex items-center justify-between gap-2 h-4 mb-1">
+                <label class="pr-price-label block leading-4 text-[11px] font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">Valor Total Pago (R$)</label>
+                <label class="flex items-center gap-1 h-4 leading-4 text-[10px] font-medium text-emerald-700 cursor-pointer select-none whitespace-nowrap">
+                    <input type="checkbox" class="pr-unit-price-toggle rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 w-3.5 h-3.5">
+                    <span>Valor Unitário</span>
+                </label>
+            </div>
+            <input type="text" inputmode="numeric" autocomplete="off" data-mask="currency" class="pr-total ${PR_FIELD}" placeholder="R$ 0,00" aria-label="Valor total ou unitário">
+            <p class="pr-cost hidden mt-1 text-[11px] text-slate-500 font-medium"></p>
         </div>
-        <div class="col-span-2 md:col-span-1">
+        <div class="col-span-2 md:col-span-1 md:pt-5">
             <button type="button" class="pr-remove w-full md:w-10 h-10 flex items-center justify-center gap-2 text-sm font-medium text-slate-500 hover:text-rose-600 hover:bg-rose-50 border border-slate-200 md:border-transparent rounded-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-slate-500" title="Remover item" aria-label="Remover item da compra">
                 <i data-lucide="trash-2" class="w-4 h-4"></i>
                 <span class="md:hidden">Remover item</span>
@@ -966,25 +1029,66 @@ function setPurchaseUnitError(row, show) {
     if (msg) msg.classList.toggle('hidden', !show);
 }
 
+// Substitua a função updatePurchaseRowCost existente por esta:
 function updatePurchaseRowCost(row) {
     const qty = parseQuantityInput(row.querySelector('.pr-qty').value);
-    const total = parseCurrencyInput(row.querySelector('.pr-total').value);
-    const unit = row.querySelector('.pr-unit').value.toLowerCase();
-    const el = row.querySelector('.pr-cost');
-    if (qty > 0 && total > 0) {
-        el.textContent = 'Custo unitário: ' + formatUnitCost(total / qty) + (unit ? ' / ' + unit : '');
-        el.classList.remove('hidden');
-    } else {
-        el.classList.add('hidden');
-    }
-}
+    const rawInputVal = parseCurrencyInput(row.querySelector('.pr-total').value);
+    const isUnitPrice = row.querySelector('.pr-unit-price-toggle').checked;
+    const priceLabel = row.querySelector('.pr-price-label');
+    const costInfoEl = row.querySelector('.pr-cost');
+    const unit = row.querySelector('.pr-unit').value;
 
+    let calculatedTotal = 0;
+
+    if (isUnitPrice) {
+        if (priceLabel) priceLabel.textContent = 'Valor Unitário (R$)';
+        if (qty > 0 && rawInputVal > 0) {
+            // Se for GR ou ML, o valor unitário inserido refere-se ao KG ou Litro (1000 unidades base)
+            if (unit === 'GR' || unit === 'ML') {
+                calculatedTotal = (qty / 1000) * rawInputVal;
+            } else {
+                calculatedTotal = qty * rawInputVal;
+            }
+            costInfoEl.textContent = 'Total calculado: ' + formatCurrency(calculatedTotal);
+            costInfoEl.classList.remove('hidden');
+        } else {
+            costInfoEl.classList.add('hidden');
+        }
+    } else {
+        if (priceLabel) priceLabel.textContent = 'Valor Total Pago (R$)';
+        if (qty > 0 && rawInputVal > 0) {
+            calculatedTotal = rawInputVal;
+            const unitCost = rawInputVal / qty;
+            costInfoEl.textContent = 'Custo unitário: ' + formatUnitCost(unitCost) + (unit ? ' / ' + unit.toLowerCase() : '');
+            costInfoEl.classList.remove('hidden');
+        } else {
+            costInfoEl.classList.add('hidden');
+        }
+    }
+    updatePurchaseTotals();
+}
 function updatePurchaseTotals() {
     const rows = document.querySelectorAll('#purchase-rows .purchase-row');
     let cents = 0;
     let count = 0;
     rows.forEach(row => {
-        cents += Math.round(parseCurrencyInput(row.querySelector('.pr-total').value) * 100);
+        const qty = parseQuantityInput(row.querySelector('.pr-qty').value);
+        const rawInputVal = parseCurrencyInput(row.querySelector('.pr-total').value);
+        const isUnitPrice = row.querySelector('.pr-unit-price-toggle').checked;
+        const unit = row.querySelector('.pr-unit').value;
+        
+        let rowTotal = 0;
+        if (isUnitPrice) {
+            if (unit === 'GR' || unit === 'ML') {
+                rowTotal = (qty / 1000) * rawInputVal;
+            } else {
+                rowTotal = qty * rawInputVal;
+            }
+        } else {
+            rowTotal = rawInputVal;
+        }
+
+        cents += Math.round(rowTotal * 100);
         if (row.querySelector('.pr-name').value.trim()) count++;
     });
     const totalEl = document.getElementById('purchase-total');
@@ -1366,6 +1470,8 @@ function openItemDetailsModal(id) {
     document.getElementById('mov-qty').value = '';
     const priceEl = document.getElementById('mov-total-price');
     if (priceEl) priceEl.value = '';
+    const movUnitToggle = document.getElementById('mov-unit-price-toggle');
+    if (movUnitToggle) movUnitToggle.checked = false;
     const dateEl = document.getElementById('mov-date');
     if (dateEl) {
         const now = new Date();
@@ -1407,11 +1513,11 @@ async function loadItemHistory(itemId) {
         const typeLabel = mov.tipo === 'ENTRADA' ? 'Entrada' : 'Saída';
         const typeClass = mov.tipo === 'ENTRADA' ? 'text-emerald-600' : 'text-rose-600';
         tr.innerHTML = `
-            <td class="p-2.5">${date}</td>
-            <td class="p-2.5 font-semibold ${typeClass}">${typeLabel}</td>
-            <td class="p-2.5">${Number(mov.quantidade || 0).toLocaleString('pt-BR')}</td>
-            <td class="p-2.5">${formatCurrency(mov.valor_total || 0)}</td>
-            <td class="p-2.5">${formatUnitCost(mov.custo_unitario || 0)}</td>
+            <td class="p-2.5 text-center">${date}</td>
+            <td class="p-2.5 text-center font-semibold ${typeClass}">${typeLabel}</td>
+            <td class="p-2.5 text-center">${Number(mov.quantidade || 0).toLocaleString('pt-BR')}</td>
+            <td class="p-2.5 text-center">${formatUnitCost(mov.custo_unitario || 0)}</td>
+            <td class="p-2.5 text-center">${formatCurrency(mov.valor_total || 0)}</td>
         `;
         tbody.appendChild(tr);
     });
@@ -1458,11 +1564,13 @@ async function registerMovement() {
     const qty = parseQuantityInput(document.getElementById('mov-qty').value);
     let totalCost = 0;
     if (type === 'ENTRADA') {
-        totalCost = parseCurrencyInput(document.getElementById('mov-total-price').value);
-        if (totalCost < 0) {
-            showToast('Valor total inválido.', 'error');
+        const rawValue = parseCurrencyInput(document.getElementById('mov-total-price').value);
+        if (rawValue < 0) {
+            showToast('Valor inválido.', 'error');
             return;
         }
+        const isUnitPrice = document.getElementById('mov-unit-price-toggle').checked;
+        totalCost = calcEntryTotal(qty, rawValue, item.unidade, isUnitPrice);
     } else {
         totalCost = (item.custo_medio || 0) * qty;
     }
@@ -1542,6 +1650,8 @@ async function registerMovement() {
 
     document.getElementById('mov-qty').value = '';
     document.getElementById('mov-total-price').value = '';
+    document.getElementById('mov-unit-price-toggle').checked = false;
+    updateMovPriceLabel();
     const dateReset = document.getElementById('mov-date');
     if (dateReset) {
         const now = new Date();

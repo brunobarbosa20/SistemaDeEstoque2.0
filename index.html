@@ -105,7 +105,7 @@
         /* ===== Nova Compra (modal com várias linhas) ===== */
         .purchase-grid { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:.75rem; }
         @media (min-width: 768px) {
-            .purchase-grid { grid-template-columns:minmax(0, 2.4fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.3fr) 2.5rem; }
+            .purchase-grid { grid-template-columns:minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.8fr) 2.5rem; }
         }
         .pr-invalid { border-color:#f43f5e !important; box-shadow:0 0 0 3px rgba(244,63,94,.15) !important; }
         #purchase-rows.is-saving { pointer-events:none; opacity:.6; }
@@ -520,11 +520,14 @@
 
                     <div>
                         <label class="block text-xs font-semibold text-slate-700 mb-1">Unidade de Medida *</label>
-                        <select id="new-unit" required class="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
-                            <option value="GR">GR - Gramas</option>
-                            <option value="UN">UN - Unidades</option>
-                            <option value="ML">ML - Mililitros</option>
-                        </select>
+                        <div class="relative">
+                            <select id="new-unit" required class="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-brand-500 appearance-none cursor-pointer pr-8">
+                                <option value="GR">GR - Gramas</option>
+                                <option value="UN">UN - Unidades</option>
+                                <option value="ML">ML - Mililitros</option>
+                            </select>
+                            <span class="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400 text-xs">▼</span>
+                        </div>
                     </div>
 
                     <div class="pt-2 border-t border-slate-100">
@@ -536,13 +539,19 @@
                     </div>
 
                     <div id="movement-fields" class="space-y-3 bg-slate-50 p-3.5 rounded-xl border border-slate-200 hidden">
-                        <div class="grid grid-cols-2 gap-3">
+                        <div class="grid grid-cols-2 gap-3 items-start">
                             <div>
-                                <label class="block text-xs font-medium text-slate-700 mb-1">Quantidade Inserida</label>
+                                <label class="block h-4 leading-4 text-xs font-medium text-slate-700 mb-1">Quantidade Inserida</label>
                                 <input type="text" inputmode="decimal" autocomplete="off" data-mask="quantity" id="new-quantity" placeholder="Ex: 500" class="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
                             </div>
                             <div>
-                                <label class="block text-xs font-medium text-slate-700 mb-1">Valor Total Pago (R$)</label>
+                                <div class="flex items-center justify-between gap-2 h-4 mb-1">
+                                    <label id="new-price-label" for="new-total-cost" class="block leading-4 text-xs font-medium text-slate-700 whitespace-nowrap">Valor Total Pago (R$)</label>
+                                    <label class="flex items-center gap-1 text-[10px] font-medium text-brand-600 cursor-pointer select-none">
+                                        <input type="checkbox" id="new-unit-price-toggle" class="rounded border-slate-300 text-brand-600 focus:ring-brand-500 w-3 h-3">
+                                        <span>Valor Unitário</span>
+                                    </label>
+                                </div>
                                 <input type="text" inputmode="numeric" autocomplete="off" data-mask="currency" id="new-total-cost" placeholder="R$ 0,00" class="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
                             </div>
                         </div>
@@ -578,17 +587,6 @@
                 </div>
 
                 <div id="purchase-scroll" class="p-4 sm:p-6 overflow-y-auto custom-scrollbar flex-1 space-y-3">
-                    <!-- Cabeçalho das colunas (apenas desktop) -->
-                    <div class="hidden md:block">
-                        <div class="purchase-grid text-[11px] font-semibold text-slate-500 uppercase tracking-wide">
-                            <span>Item</span>
-                            <span>Unidade</span>
-                            <span>Quantidade</span>
-                            <span>Valor total pago (R$)</span>
-                            <span></span>
-                        </div>
-                    </div>
-
                     <!-- Linhas dinâmicas (geradas via JS) -->
                     <div id="purchase-rows" class="space-y-3"></div>
 
@@ -713,17 +711,23 @@
                             </div>
                         </div>
 
-                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div class="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)_minmax(0,1.3fr)] gap-3 items-start">
                             <div>
-                                <label for="mov-qty" class="block text-xs font-medium text-slate-700 mb-1">Quantidade</label>
+                                <label for="mov-qty" class="block h-4 leading-4 text-xs font-medium text-slate-700 mb-1">Quantidade</label>
                                 <input type="text" inputmode="decimal" autocomplete="off" data-mask="quantity" id="mov-qty" placeholder="Ex: 50" class="mov-input w-full px-3 py-2.5 sm:py-2 bg-slate-50 border border-slate-300 rounded-lg">
                             </div>
                             <div id="mov-cost-container">
-                                <label for="mov-total-price" class="block text-xs font-medium text-slate-700 mb-1">Valor Total Pago (R$)</label>
+                                <div class="flex items-center justify-between gap-2 h-4 mb-1">
+                                    <label id="mov-price-label" for="mov-total-price" class="block leading-4 text-xs font-medium text-slate-700 whitespace-nowrap">Valor Total Pago (R$)</label>
+                                    <label class="flex items-center gap-1 h-4 leading-4 text-[10px] font-medium text-brand-600 cursor-pointer select-none whitespace-nowrap">
+                                        <input type="checkbox" id="mov-unit-price-toggle" class="rounded border-slate-300 text-brand-600 focus:ring-brand-500 w-3 h-3">
+                                        <span>Valor Unitário</span>
+                                    </label>
+                                </div>
                                 <input type="text" inputmode="numeric" autocomplete="off" data-mask="currency" id="mov-total-price" placeholder="R$ 0,00" class="mov-input w-full px-3 py-2.5 sm:py-2 bg-slate-50 border border-slate-300 rounded-lg">
                             </div>
                             <div>
-                                <label for="mov-date" class="block text-xs font-medium text-slate-700 mb-1">Data e Hora da Movimentação</label>
+                                <label for="mov-date" class="block h-4 leading-4 text-xs font-medium text-slate-700 mb-1">Data e Hora da Movimentação</label>
                                 <div class="relative">
                                     <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400 pointer-events-none">
                                         <i data-lucide="calendar-clock" class="w-4 h-4"></i>
@@ -753,11 +757,11 @@
                             <table class="w-full min-w-[480px] whitespace-nowrap text-left text-xs">
                                 <thead class="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200">
                                     <tr>
-                                        <th class="p-2.5">Data/Hora</th>
-                                        <th class="p-2.5">Tipo</th>
-                                        <th class="p-2.5">Qtd</th>
-                                        <th class="p-2.5">Valor Total</th>
-                                        <th class="p-2.5">Custo Calculado</th>
+                                        <th class="p-2.5 text-center">Data/Hora</th>
+                                        <th class="p-2.5 text-center">Tipo</th>
+                                        <th class="p-2.5 text-center">Quantidade</th>
+                                        <th class="p-2.5 text-center">Valor Unitário</th>
+                                        <th class="p-2.5 text-center">Valor Total</th>
                                     </tr>
                                 </thead>
                                 <tbody id="history-table-body" class="divide-y divide-slate-100 text-slate-700">
