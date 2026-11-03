@@ -83,9 +83,9 @@
         }
         /* ===== Seletor Entrada / Saída (segmentado) ===== */
         .mov-seg { position:relative; display:grid; grid-template-columns:1fr 1fr; padding:4px; background:#f1f5f9; border:1px solid #e2e8f0; border-radius:14px; }
-        .mov-seg-indicator { position:absolute; top:4px; bottom:4px; left:4px; width:calc(50% - 4px); border-radius:10px; background:#059669; box-shadow:0 4px 12px -2px rgba(5,150,105,.45); transition:transform .35s cubic-bezier(.22,1,.36,1), background-color .3s ease, box-shadow .3s ease; }
+        .mov-seg-indicator { position:absolute; top:4px; bottom:4px; left:4px; width:calc(50% - 4px); border-radius:10px; background:#059669; box-shadow:0 4px 12px -2px rgba(5,150,105,.45); transition:transform .45s cubic-bezier(.16,1,.3,1), background-color .4s ease, box-shadow .4s ease; }
         .mov-seg[data-type="OUT"] .mov-seg-indicator { transform:translateX(100%); background:#e11d48; box-shadow:0 4px 12px -2px rgba(225,29,72,.45); }
-        .mov-seg-btn { position:relative; z-index:1; min-height:48px; display:flex; align-items:center; justify-content:center; gap:8px; border-radius:10px; font-size:14px; font-weight:600; color:#64748b; background:transparent; -webkit-tap-highlight-color:transparent; transition:color .25s ease, transform .15s ease; }
+        .mov-seg-btn { position:relative; z-index:1; min-height:48px; display:flex; align-items:center; justify-content:center; gap:8px; border-radius:10px; font-size:14px; font-weight:600; color:#64748b; background:transparent; -webkit-tap-highlight-color:transparent; transition:color .25s ease, background-color .25s ease, transform .15s ease; }
         .mov-seg-btn:active { transform:scale(.97); }
         .mov-seg[data-type="IN"] .mov-seg-btn[data-type="IN"], .mov-seg[data-type="OUT"] .mov-seg-btn[data-type="OUT"] { color:#fff; }
         .mov-submit { display:flex; align-items:center; justify-content:center; gap:8px; min-height:48px; padding:0 20px; border-radius:12px; color:#fff; font-size:14px; font-weight:600; background:#059669; box-shadow:0 4px 12px -2px rgba(5,150,105,.35); transition:background-color .3s ease, box-shadow .3s ease, transform .15s ease; }
@@ -201,6 +201,9 @@
                     <button onclick="showSection('estoque')" class="w-full text-left px-4 py-2.5 rounded-lg hover:bg-slate-800 transition-all flex items-center gap-2">
                         <i data-lucide="package" class="w-4 h-4"></i> Estoque
                     </button>
+                    <button onclick="showSection('receitas')" class="w-full text-left px-4 py-2.5 rounded-lg hover:bg-slate-800 transition-all flex items-center gap-2">
+                        <i data-lucide="chef-hat" class="w-4 h-4"></i> Receitas / Produção
+                    </button>
                     <button onclick="showSection('relatorio')" class="w-full text-left px-4 py-2.5 rounded-lg hover:bg-slate-800 transition-all flex items-center gap-2">
                         <i data-lucide="file-text" class="w-4 h-4"></i> Relatório
                     </button>
@@ -294,32 +297,44 @@
 
                 <section id="sec-estoque" class="section-content space-y-6">
 <!-- Barra de Ações / Filtros -->
-                <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col md:flex-row gap-3 md:items-center md:justify-between">
-                    <div class="relative w-full min-w-0 md:flex-1 md:max-w-sm">
-                        <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400">
-                            <i data-lucide="search" class="w-4 h-4"></i>
-                        </span>
-                        <input type="text" id="search-input" oninput="renderItems()" placeholder="Buscar item por nome..." class="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-brand-500">
-                        <div id="search-results" class="autocomplete-results hidden absolute left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-lg text-slate-800 text-sm max-h-48 overflow-y-auto z-50"></div>
+                <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-3">
+                    <div class="flex flex-col lg:flex-row gap-3 lg:items-center">
+                        <div class="relative w-full min-w-0 lg:flex-1">
+                            <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400">
+                                <i data-lucide="search" class="w-4 h-4"></i>
+                            </span>
+                            <input type="text" id="search-input" oninput="renderItems()" placeholder="Buscar por nome ou código..." aria-label="Buscar itens por nome ou código" class="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-brand-500">
+                            <div id="search-results" class="autocomplete-results hidden absolute left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-lg text-slate-800 text-sm max-h-48 overflow-y-auto z-50"></div>
+                        </div>
+
+                        <div class="w-full lg:w-56 lg:shrink-0">
+                            <select id="unit-filter" onchange="renderItems()" aria-label="Filtrar por unidade" class="w-full bg-slate-50 border border-slate-200 text-slate-700 text-sm rounded-lg px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-brand-500">
+                                <option value="ALL">Todas as Medidas</option>
+                                <option value="GR">Gramas (GR)</option>
+                                <option value="UN">Unidades (UN)</option>
+                                <option value="ML">Mililitros (ML)</option>
+                            </select>
+                        </div>
+
                     </div>
 
-                    <div class="flex flex-col sm:flex-row gap-3 w-full md:w-auto md:shrink-0 sm:justify-end">
-                        <select id="unit-filter" onchange="renderItems()" class="w-full sm:w-auto bg-slate-50 border border-slate-200 text-slate-700 text-sm rounded-lg px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-brand-500">
-                            <option value="ALL">Todas as Medidas</option>
-                            <option value="GR">Gramas (GR)</option>
-                            <option value="UN">Unidades (UN)</option>
-                            <option value="ML">Mililitros (ML)</option>
-                        </select>
+                    <div class="flex items-center justify-between gap-3">
+                        <div class="flex min-w-0 flex-nowrap gap-2 overflow-x-auto pb-1" role="group" aria-label="Filtrar por tipo de item">
+                            <button id="stock-type-all" type="button" onclick="setStockTypeFilter('ALL')" aria-pressed="true" class="stock-type-filter is-active bg-brand-600 border-brand-600 text-white px-3 py-2 text-xs font-semibold rounded-lg border transition-colors whitespace-nowrap shrink-0">Todos</button>
+                            <button id="stock-type-ingredient" type="button" onclick="setStockTypeFilter('INGREDIENT')" aria-pressed="false" class="stock-type-filter bg-white border-slate-200 text-slate-600 hover:bg-slate-50 px-3 py-2 text-xs font-semibold rounded-lg border transition-colors whitespace-nowrap shrink-0">Ingredientes em Geral</button>
+                            <button id="stock-type-finished" type="button" onclick="setStockTypeFilter('FINISHED')" aria-pressed="false" class="stock-type-filter bg-white border-slate-200 text-slate-600 hover:bg-slate-50 px-3 py-2 text-xs font-semibold rounded-lg border transition-colors whitespace-nowrap shrink-0">Produtos Acabados</button>
+                        </div>
+                        <div class="flex shrink-0 gap-3">
+                            <button onclick="openNewPurchaseModal()" class="w-full sm:w-auto justify-center px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-medium text-sm rounded-lg shadow-sm shadow-emerald-600/30 flex items-center gap-2 transition-all shrink-0">
+                                <i data-lucide="shopping-cart" class="w-4 h-4"></i>
+                                <span class="hidden sm:inline">Nova Compra</span>
+                            </button>
 
-                        <button onclick="openNewPurchaseModal()" class="w-full sm:w-auto justify-center px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-medium text-sm rounded-lg shadow-sm shadow-emerald-600/30 flex items-center gap-2 transition-all shrink-0">
-                            <i data-lucide="shopping-cart" class="w-4 h-4"></i>
-                            <span>Nova Compra</span>
-                        </button>
-
-                        <button onclick="openNewItemModal()" class="w-full sm:w-auto justify-center px-4 py-2.5 bg-brand-600 hover:bg-brand-700 text-white font-medium text-sm rounded-lg shadow-sm flex items-center gap-2 transition-all shrink-0">
-                            <i data-lucide="plus" class="w-4 h-4"></i>
-                            <span>Novo Item</span>
-                        </button>
+                            <button onclick="openNewItemModal()" class="w-full sm:w-auto justify-center px-4 py-2.5 bg-brand-600 hover:bg-brand-700 text-white font-medium text-sm rounded-lg shadow-sm flex items-center gap-2 transition-all shrink-0">
+                                <i data-lucide="plus" class="w-4 h-4"></i>
+                                <span class="hidden sm:inline">Novo Item</span>
+                            </button>
+                        </div>
                     </div>
                 </div>
 
@@ -350,6 +365,46 @@
                         <p class="text-xs text-slate-500 mt-1">Cadastre novos insumos para começar o controle de custos.</p>
                     </div>
                 </div>
+                </section>
+                <section id="sec-receitas" class="section-content space-y-6">
+                    <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
+                        <div>
+                            <h2 class="text-lg font-bold text-slate-900">Receitas / Produção</h2>
+                            <p class="text-xs text-slate-500 mt-1">Gerencie fichas técnicas e baixe os insumos ao registrar uma produção.</p>
+                        </div>
+                        <div class="flex flex-col sm:flex-row gap-2">
+                            <button onclick="openProductionModal()" class="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm rounded-lg flex items-center justify-center gap-2 transition-all">
+                                <i data-lucide="factory" class="w-4 h-4"></i>
+                                Registrar Produção
+                            </button>
+                            <button onclick="openNewRecipeModal()" class="px-4 py-2.5 bg-brand-600 hover:bg-brand-700 text-white font-semibold text-sm rounded-lg flex items-center justify-center gap-2 transition-all">
+                                <i data-lucide="plus" class="w-4 h-4"></i>
+                                Nova Receita
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                        <div class="overflow-x-auto w-full">
+                            <table class="w-full text-left text-sm">
+                                <thead class="bg-slate-50 border-b border-slate-200 text-xs text-slate-500 uppercase tracking-wider whitespace-nowrap">
+                                    <tr>
+                                        <th class="px-4 sm:px-6 py-3.5 font-semibold">Nome do Produto Acabado</th>
+                                        <th class="px-4 sm:px-6 py-3.5 font-semibold">Rendimento Padrão</th>
+                                        <th class="px-4 sm:px-6 py-3.5 font-semibold text-right">Ações</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="recipes-table-body" class="divide-y divide-slate-100"></tbody>
+                            </table>
+                        </div>
+                        <div id="recipes-empty-state" class="p-10 text-center hidden">
+                            <div class="w-12 h-12 rounded-full bg-slate-100 text-slate-400 mx-auto flex items-center justify-center mb-3">
+                                <i data-lucide="book-open" class="w-6 h-6"></i>
+                            </div>
+                            <h3 class="text-sm font-semibold text-slate-700">Nenhuma receita cadastrada</h3>
+                            <p class="text-xs text-slate-500 mt-1">Crie uma ficha técnica para começar a registrar produções.</p>
+                        </div>
+                    </div>
                 </section>
                  <section id="sec-relatorio" class="section-content space-y-6">
 <!-- Cards de Resumo do Relatório -->
@@ -615,6 +670,248 @@
             </div>
         </div>
 
+        <div id="modal-receita" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+            <div class="bg-white w-full max-w-3xl rounded-2xl shadow-2xl border border-slate-100 overflow-hidden flex flex-col max-h-[92vh]">
+                <div class="px-4 sm:px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+                    <div class="flex items-center gap-3">
+                        <div class="p-2 bg-brand-100 text-brand-700 rounded-lg"><i data-lucide="book-open" class="w-5 h-5"></i></div>
+                        <div>
+                            <h3 id="recipe-modal-title" class="text-base font-bold text-slate-900">Nova Receita</h3>
+                            <p class="text-[11px] text-slate-500">Informe o rendimento total e os ingredientes usados na receita inteira.</p>
+                        </div>
+                    </div>
+                    <button type="button" onclick="closeModal('modal-receita')" aria-label="Fechar" class="text-slate-400 hover:text-slate-600 p-1 rounded-lg">
+                        <i data-lucide="x" class="w-5 h-5"></i>
+                    </button>
+                </div>
+                <div class="p-4 sm:p-6 overflow-y-auto custom-scrollbar flex-1 space-y-5">
+                    <div class="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_minmax(14rem,auto)] gap-3 items-end">
+                        <div>
+                            <label for="recipe-name" class="block text-xs font-semibold text-slate-700 mb-1.5">Nome do Produto Acabado (P.A.)</label>
+                            <input id="recipe-name" type="text" maxlength="120" placeholder="Ex: Bolo de Chocolate P" class="w-full px-3 py-2.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
+                        </div>
+                        <div class="grid grid-cols-2 gap-3 items-end">
+                            <div>
+                                <label for="recipe-yield" class="block text-xs font-semibold text-slate-700 mb-1.5">Rendimento (porções/unidades)</label>
+                                <input id="recipe-yield" type="number" min="1" max="2147483647" step="1" value="1" inputmode="numeric" class="w-full px-3 py-2.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
+                            </div>
+                            <div class="pb-2.5 text-xs font-semibold text-slate-600">Unidade do P.A.: <span class="px-2 py-1 bg-slate-100 rounded font-mono">UN</span></div>
+                        </div>
+                    </div>
+                    <div>
+                        <div class="flex items-center justify-between gap-2 mb-2">
+                            <div>
+                                <h4 class="text-sm font-bold text-slate-800">Ingredientes da receita inteira</h4>
+                                <p class="text-[11px] text-slate-500">Informe as quantidades totais; o consumo por unidade será calculado pelo rendimento.</p>
+                            </div>
+                            <button type="button" onclick="addRecipeItemRow()" class="shrink-0 px-3 py-2 text-xs font-semibold text-brand-700 bg-brand-50 hover:bg-brand-100 border border-brand-200 rounded-lg flex items-center gap-1.5">
+                                <i data-lucide="plus" class="w-3.5 h-3.5"></i> Adicionar insumo
+                            </button>
+                        </div>
+                        <div class="recipe-grid recipe-grid-heading hidden sm:grid text-[10px] font-semibold uppercase tracking-wide text-slate-500 px-2 mb-1">
+                            <span>Insumo cadastrado</span><span>Total na receita</span><span>Unidade</span><span>Consumo / unidade</span><span></span>
+                        </div>
+                        <div id="recipe-items" class="space-y-2"></div>
+                    </div>
+                </div>
+                <div class="px-4 sm:px-6 py-4 bg-slate-50 border-t border-slate-100 flex justify-end gap-2">
+                    <button type="button" onclick="closeModal('modal-receita')" class="px-4 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-200 rounded-lg">Cancelar</button>
+                    <button id="recipe-submit" type="button" onclick="saveRecipe()" class="px-5 py-2.5 bg-brand-600 hover:bg-brand-700 disabled:opacity-60 text-white text-sm font-semibold rounded-lg">Salvar Receita</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="modal-producao" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+            <div class="bg-white w-full max-w-lg max-h-[92vh] rounded-2xl shadow-2xl border border-slate-100 overflow-hidden flex flex-col">
+                <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50 shrink-0">
+                    <div class="flex items-center gap-3">
+                        <div class="p-2 bg-emerald-100 text-emerald-700 rounded-lg"><i data-lucide="factory" class="w-5 h-5"></i></div>
+                        <div>
+                            <h3 class="text-base font-bold text-slate-900">Registrar Produção</h3>
+                            <p class="text-[11px] text-slate-500">Os insumos serão baixados automaticamente.</p>
+                        </div>
+                    </div>
+                    <button type="button" onclick="closeModal('modal-producao')" aria-label="Fechar" class="text-slate-400 hover:text-slate-600 p-1 rounded-lg">
+                        <i data-lucide="x" class="w-5 h-5"></i>
+                    </button>
+                </div>
+                <div class="p-5 space-y-4 overflow-y-auto">
+                    <div>
+                        <label for="production-recipe" class="block text-xs font-semibold text-slate-700 mb-1.5">Receita</label>
+                        <select id="production-recipe" onchange="updateProductionPreview()" class="w-full px-3 py-2.5 bg-white border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"></select>
+                    </div>
+                    <div>
+                        <label for="production-quantity" class="block text-xs font-semibold text-slate-700 mb-1.5">Unidades Produzidas</label>
+                        <input id="production-quantity" type="number" min="1" step="1" inputmode="numeric" placeholder="Ex: 10" oninput="updateProductionPreview()" class="w-full px-3 py-2.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                        <p class="mt-1.5 text-[11px] text-slate-500">Informe um número inteiro maior que zero.</p>
+                    </div>
+                    <section id="production-preview" class="hidden rounded-xl border border-slate-200 bg-slate-50 p-4" aria-live="polite">
+                        <div class="flex items-start justify-between gap-3">
+                            <div>
+                                <p class="text-xs font-medium text-slate-500">Custo total estimado do lote</p>
+                                <p id="production-total-cost" class="mt-1 text-xl font-bold text-slate-900">—</p>
+                            </div>
+                            <div class="text-right">
+                                <p class="text-xs font-medium text-slate-500">Custo por unidade</p>
+                                <p id="production-unit-cost" class="mt-1 text-sm font-semibold text-slate-700">—</p>
+                            </div>
+                        </div>
+                        <div class="mt-4">
+                            <h4 class="text-xs font-semibold text-slate-700">Baixa prevista de insumos</h4>
+                            <ul id="production-ingredient-list" class="production-preview-list custom-scrollbar mt-2 divide-y divide-slate-200 rounded-lg border border-slate-200 bg-white px-3"></ul>
+                        </div>
+                    </section>
+                    <div id="production-stock-warning" class="hidden rounded-lg border border-rose-300 bg-rose-50 px-3.5 py-3 text-sm font-medium text-rose-800" role="alert"></div>
+                    <div>
+                        <label for="production-note" class="block text-xs font-semibold text-slate-700 mb-1.5">Observações do Lote / Validade <span class="font-normal text-slate-400">(opcional)</span></label>
+                        <input id="production-note" type="text" maxlength="500" placeholder="Ex: Lote da manhã · Validade: 5 dias" class="w-full px-3 py-2.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                    </div>
+                </div>
+                <div class="px-5 py-4 bg-slate-50 border-t border-slate-100 flex justify-end gap-2 shrink-0">
+                    <button type="button" onclick="closeModal('modal-producao')" class="px-4 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-200 rounded-lg">Cancelar</button>
+                    <button id="production-submit" type="button" onclick="registerProduction()" disabled class="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60 text-white text-sm font-semibold rounded-lg">Confirmar Produção</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="modal-receita-details" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+            <div class="bg-white w-full max-w-4xl rounded-2xl shadow-2xl border border-slate-100 overflow-hidden flex flex-col max-h-[92vh]">
+                <div class="px-4 sm:px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+                    <div class="flex items-center gap-3 min-w-0">
+                        <div class="p-2 bg-brand-100 text-brand-700 rounded-lg shrink-0"><i data-lucide="clipboard-list" class="w-5 h-5"></i></div>
+                        <div class="min-w-0">
+                            <h3 id="recipe-details-name" class="text-base font-bold text-slate-900 truncate">Detalhes da Receita</h3>
+                            <p id="recipe-details-yield" class="text-[11px] text-slate-500">Rendimento padrão: 1 UN</p>
+                        </div>
+                    </div>
+                    <button type="button" onclick="closeModal('modal-receita-details')" aria-label="Fechar" class="text-slate-400 hover:text-slate-600 p-1 rounded-lg">
+                        <i data-lucide="x" class="w-5 h-5"></i>
+                    </button>
+                </div>
+                <div class="border-b border-slate-200 bg-white px-4 sm:px-6">
+                    <div class="flex gap-2 overflow-x-auto" role="tablist" aria-label="Visões de custo da receita">
+                        <button id="recipe-details-tab-unit" type="button" class="recipe-details-tab is-active" role="tab" aria-selected="true" aria-controls="recipe-details-panel-unit" onclick="setRecipeDetailsTab('unit')">
+                            <i data-lucide="chart-column" class="w-4 h-4"></i>
+                            <span>Custo Unitário &amp; Análise</span>
+                        </button>
+                        <button id="recipe-details-tab-full" type="button" class="recipe-details-tab" role="tab" aria-selected="false" aria-controls="recipe-details-panel-full" onclick="setRecipeDetailsTab('full')">
+                            <i data-lucide="book-open" class="w-4 h-4"></i>
+                            <span id="recipe-details-full-tab-label">Receita Completa (Lote de 1 UN)</span>
+                        </button>
+                    </div>
+                </div>
+                <div class="p-4 sm:p-6 overflow-y-auto custom-scrollbar flex-1">
+                    <div id="recipe-details-panel-unit" class="space-y-5" role="tabpanel" aria-labelledby="recipe-details-tab-unit">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div class="p-4 bg-brand-50 border border-brand-100 rounded-xl">
+                            <span class="block text-[10px] font-semibold text-brand-700 uppercase tracking-wide">Custo para produzir 1 unidade</span>
+                            <strong id="recipe-details-unit-cost" class="block mt-1 text-2xl font-bold text-brand-800">R$ 0,00</strong>
+                        </div>
+                        <div class="p-4 bg-slate-50 border border-slate-200 rounded-xl">
+                            <span class="block text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Custo total do lote base</span>
+                            <strong id="recipe-details-batch-cost" class="block mt-1 text-2xl font-bold text-slate-800">R$ 0,00</strong>
+                        </div>
+                    </div>
+                    <div id="recipe-details-missing-warning" class="hidden p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800">
+                        Há insumo(s) desta receita que não foram encontrados no estoque. O custo apresentado está incompleto.
+                    </div>
+                    <div class="bg-white border border-slate-200 rounded-xl overflow-hidden">
+                        <div class="px-4 py-3 bg-slate-50 border-b border-slate-200">
+                            <h4 class="text-sm font-bold text-slate-800">Composição do custo por unidade</h4>
+                            <p class="text-[11px] text-slate-500 mt-0.5">Custos calculados com base no custo médio atual dos insumos.</p>
+                        </div>
+                        <div class="overflow-x-auto">
+                            <table class="w-full min-w-[650px] text-left text-sm">
+                                <thead class="bg-white border-b border-slate-200 text-[10px] text-slate-500 uppercase tracking-wide">
+                                    <tr>
+                                        <th class="px-4 py-3 font-semibold">Insumo</th>
+                                        <th class="px-4 py-3 font-semibold text-right">Quantidade / UN</th>
+                                        <th class="px-4 py-3 font-semibold text-right">Custo médio unitário do insumo</th>
+                                        <th class="px-4 py-3 font-semibold text-right">Custo do insumo / UN do P.A.</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="recipe-details-items" class="divide-y divide-slate-100 text-slate-700"></tbody>
+                            </table>
+                        </div>
+                        <div id="recipe-details-empty" class="hidden px-4 py-8 text-center text-xs text-slate-500">Esta receita ainda não possui ingredientes cadastrados.</div>
+                    </div>
+                    <section class="bg-white border border-slate-200 rounded-xl overflow-hidden">
+                        <div class="px-4 py-3 bg-slate-50 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                            <div>
+                                <h4 class="text-sm font-bold text-slate-800">Evolução do custo de produção por unidade</h4>
+                                <p class="text-[11px] text-slate-500 mt-0.5">Estimativa calculada com os custos registrados no histórico dos insumos.</p>
+                            </div>
+                            <div class="flex flex-wrap items-end gap-2">
+                                <label class="text-[10px] font-semibold text-slate-600">
+                                    De
+                                    <input id="recipe-cost-date-start" type="date" class="mt-1 block rounded-lg border border-slate-300 px-2 py-1.5 text-xs text-slate-700 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100">
+                                </label>
+                                <label class="text-[10px] font-semibold text-slate-600">
+                                    Até
+                                    <input id="recipe-cost-date-end" type="date" class="mt-1 block rounded-lg border border-slate-300 px-2 py-1.5 text-xs text-slate-700 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-100">
+                                </label>
+                                <button type="button" onclick="applyRecipeCostDateFilter()" class="px-3 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-lg text-xs font-semibold">Filtrar</button>
+                                <button type="button" onclick="clearRecipeCostDateFilter()" class="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold">Limpar</button>
+                            </div>
+                        </div>
+                        <div class="p-4 sm:p-5 space-y-4">
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                <div class="p-3 bg-emerald-50 border border-emerald-100 rounded-lg">
+                                    <span class="block text-[10px] font-semibold text-emerald-700 uppercase tracking-wide">Menor custo no período</span>
+                                    <strong id="recipe-cost-min-value" class="block mt-1 text-lg font-bold text-emerald-700">—</strong>
+                                    <span id="recipe-cost-min-date" class="block text-[10px] text-emerald-700/80"></span>
+                                </div>
+                                <div class="p-3 bg-rose-50 border border-rose-100 rounded-lg">
+                                    <span class="block text-[10px] font-semibold text-rose-700 uppercase tracking-wide">Maior custo no período</span>
+                                    <strong id="recipe-cost-max-value" class="block mt-1 text-lg font-bold text-rose-700">—</strong>
+                                    <span id="recipe-cost-max-date" class="block text-[10px] text-rose-700/80"></span>
+                                </div>
+                            </div>
+                            <div id="recipe-cost-chart-wrap" class="relative h-64 sm:h-72">
+                                <canvas id="recipe-cost-chart"></canvas>
+                            </div>
+                            <p id="recipe-cost-chart-message" class="hidden py-8 text-center text-xs text-slate-500"></p>
+                        </div>
+                    </section>
+                    </div>
+                    <div id="recipe-details-panel-full" class="hidden space-y-5" role="tabpanel" aria-labelledby="recipe-details-tab-full">
+                        <div class="p-4 bg-brand-50 border border-brand-100 rounded-xl">
+                            <span class="block text-[10px] font-semibold text-brand-700 uppercase tracking-wide">Custo total da receita inteira</span>
+                            <strong id="recipe-details-full-cost" class="block mt-1 text-2xl font-bold text-brand-800">R$ 0,00</strong>
+                            <span id="recipe-details-full-yield" class="block mt-1 text-xs text-brand-700">Lote base para 1 UN</span>
+                        </div>
+                        <div id="recipe-details-full-missing-warning" class="hidden p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800">
+                            Há insumo(s) desta receita que não foram encontrados no estoque. O custo total está incompleto.
+                        </div>
+                        <div class="bg-white border border-slate-200 rounded-xl overflow-hidden">
+                            <div class="px-4 py-3 bg-slate-50 border-b border-slate-200">
+                                <h4 class="text-sm font-bold text-slate-800">Ficha técnica do lote completo</h4>
+                                <p class="text-[11px] text-slate-500 mt-0.5">Custos e participação calculados com base no custo médio atual dos insumos.</p>
+                            </div>
+                            <div class="overflow-x-auto">
+                                <table class="w-full min-w-[760px] text-left text-sm">
+                                    <thead class="bg-white border-b border-slate-200 text-[10px] text-slate-500 uppercase tracking-wide">
+                                        <tr>
+                                            <th class="px-4 py-3 font-semibold">Insumo</th>
+                                            <th class="px-4 py-3 font-semibold text-right">Qtd. total na receita</th>
+                                            <th class="px-4 py-3 font-semibold text-right">Custo médio</th>
+                                            <th class="px-4 py-3 font-semibold text-right">Custo total na receita</th>
+                                            <th class="px-4 py-3 font-semibold text-right">% do custo</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="recipe-details-full-items" class="divide-y divide-slate-100 text-slate-700"></tbody>
+                                </table>
+                            </div>
+                            <div id="recipe-details-full-empty" class="hidden px-4 py-8 text-center text-xs text-slate-500">Esta receita ainda não possui ingredientes cadastrados.</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="px-4 sm:px-6 py-3 bg-slate-50 border-t border-slate-100 flex justify-end">
+                    <button type="button" onclick="closeModal('modal-receita-details')" class="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 text-sm font-medium rounded-lg">Fechar</button>
+                </div>
+            </div>
+        </div>
+
         <!-- Modal Pop-up Detalhes / Gerenciamento do Item -->
         <div id="modal-item-details" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
             <div class="bg-white w-full max-w-3xl rounded-2xl shadow-2xl border border-slate-100 overflow-hidden flex flex-col max-h-[90vh]">
@@ -711,20 +1008,24 @@
                             </div>
                         </div>
 
-                        <div class="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)_minmax(0,1.3fr)] gap-3 items-start">
-                            <div>
-                                <label for="mov-qty" class="block h-4 leading-4 text-xs font-medium text-slate-700 mb-1">Quantidade</label>
-                                <input type="text" inputmode="decimal" autocomplete="off" data-mask="quantity" id="mov-qty" placeholder="Ex: 50" class="mov-input w-full px-3 py-2.5 sm:py-2 bg-slate-50 border border-slate-300 rounded-lg">
-                            </div>
-                            <div id="mov-cost-container">
-                                <div class="flex items-center justify-between gap-2 h-4 mb-1">
-                                    <label id="mov-price-label" for="mov-total-price" class="block leading-4 text-xs font-medium text-slate-700 whitespace-nowrap">Valor Total Pago (R$)</label>
-                                    <label class="flex items-center gap-1 h-4 leading-4 text-[10px] font-medium text-brand-600 cursor-pointer select-none whitespace-nowrap">
-                                        <input type="checkbox" id="mov-unit-price-toggle" class="rounded border-slate-300 text-brand-600 focus:ring-brand-500 w-3 h-3">
-                                        <span>Valor Unitário</span>
-                                    </label>
+                        <div class="mov-fields-grid grid grid-cols-1 sm:grid-cols-2 gap-3 items-start">
+                            <div class="mov-quantity-column space-y-3">
+                                <div>
+                                    <label for="mov-qty" class="block h-4 leading-4 text-xs font-medium text-slate-700 mb-1">Quantidade</label>
+                                    <input type="text" inputmode="decimal" autocomplete="off" data-mask="quantity" id="mov-qty" placeholder="Ex: 50" class="mov-input w-full px-3 py-2.5 sm:py-2 bg-slate-50 border border-slate-300 rounded-lg">
                                 </div>
-                                <input type="text" inputmode="numeric" autocomplete="off" data-mask="currency" id="mov-total-price" placeholder="R$ 0,00" class="mov-input w-full px-3 py-2.5 sm:py-2 bg-slate-50 border border-slate-300 rounded-lg">
+                                <div id="mov-cost-container">
+                                    <div class="mov-cost-inner">
+                                        <div class="flex items-center justify-between gap-2 h-4 mb-1">
+                                            <label id="mov-price-label" for="mov-total-price" class="block leading-4 text-xs font-medium text-slate-700 whitespace-nowrap">Valor Total Pago (R$)</label>
+                                            <label class="flex items-center gap-1 h-4 leading-4 text-[10px] font-medium text-brand-600 cursor-pointer select-none whitespace-nowrap">
+                                                <input type="checkbox" id="mov-unit-price-toggle" class="rounded border-slate-300 text-brand-600 focus:ring-brand-500 w-3 h-3">
+                                                <span>Valor Unitário</span>
+                                            </label>
+                                        </div>
+                                        <input type="text" inputmode="numeric" autocomplete="off" data-mask="currency" id="mov-total-price" placeholder="R$ 0,00" class="mov-input w-full px-3 py-2.5 sm:py-2 bg-slate-50 border border-slate-300 rounded-lg">
+                                    </div>
+                                </div>
                             </div>
                             <div>
                                 <label for="mov-date" class="block h-4 leading-4 text-xs font-medium text-slate-700 mb-1">Data e Hora da Movimentação</label>
@@ -740,7 +1041,7 @@
                         <div id="mov-preview" class="hidden text-xs font-medium rounded-lg px-3 py-2 border" role="status"></div>
 
                         <div class="flex sm:justify-end">
-                            <button type="button" onclick="registerMovement()" class="mov-submit w-full sm:w-auto">
+                            <button type="button" onclick="registerMovement()" class="mov-submit btn-mov-submit w-full sm:w-auto">
                                 <i data-lucide="check" class="w-4 h-4"></i>
                                 <span id="mov-submit-label">Registrar Entrada</span>
                             </button>

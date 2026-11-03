@@ -4,6 +4,11 @@ body { font-family: 'Inter', sans-serif; }
 .custom-scrollbar::-webkit-scrollbar-track { background: #f1f5f9; }
 .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
 .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+.production-preview-list {
+    max-height: 9rem;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+}
 
 /* Transicoes de secoes */
 .section-content {
@@ -14,6 +19,57 @@ body { font-family: 'Inter', sans-serif; }
 .section-content.active {
     opacity: 1;
     display: block;
+}
+
+#mov-cost-container {
+    max-height: 150px;
+    opacity: 1;
+    overflow: hidden;
+    margin-top: 0.75rem;
+    transition: max-height 0.45s cubic-bezier(0.16, 1, 0.3, 1),
+                opacity 0.35s ease-in-out,
+                margin-top 0.45s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.mov-fields-grid {
+    display: grid;
+}
+.mov-quantity-column {
+    min-width: 0;
+}
+.mov-fields-grid > div {
+    min-width: 0;
+}
+#mov-cost-container.mov-cost-hidden {
+    max-height: 0px;
+    opacity: 0;
+    margin-top: 0px !important;
+    pointer-events: none;
+}
+.mov-cost-inner {
+    min-height: 0;
+    overflow: hidden;
+}
+.mov-seg-indicator {
+    position: absolute;
+    top: 4px;
+    bottom: 4px;
+    left: 4px;
+    width: calc(50% - 4px);
+    border-radius: 10px;
+    background: #059669;
+    box-shadow: 0 4px 12px -2px rgba(5, 150, 105, .45);
+    transition: transform 0.45s cubic-bezier(0.16, 1, 0.3, 1), background-color 0.4s ease, box-shadow 0.4s ease;
+}
+.mov-seg[data-type="OUT"] .mov-seg-indicator {
+    transform: translateX(100%);
+    background: #e11d48;
+    box-shadow: 0 4px 12px -2px rgba(225, 29, 72, .45);
+}
+@media (prefers-reduced-motion: reduce) {
+    #mov-cost-container {
+        transition: none;
+    }
 }
 
 /* Cabeçalhos clicáveis do relatório */
@@ -36,4 +92,121 @@ th[onclick]:hover { background-color: #f1f5f9; color: #0369a1; }
 [id^="modal-"].modal-open > div {
     opacity: 1;
     transform: scale(1);
+}
+
+/* Botão de confirmação com tamanho fixo */
+.btn-mov-submit {
+    min-width: 175px; /* Mantém o tamanho fixo independentemente do texto */
+    transition: background-color 0.3s ease, border-color 0.3s ease;
+}
+@media (min-width: 640px) {
+    .btn-mov-submit {
+        width: 200px;
+        min-width: 200px;
+        flex-shrink: 0;
+    }
+}
+
+/* Garante que o card de movimentação tem sempre altura suficiente para os dois estados, evitando saltos no modal */
+#mov-card {
+    min-height: 240px; /* Ajusta este valor conforme necessário para acomodar os campos de entrada */
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+}
+
+/* Transição suave do campo de custo sem afetar o layout global */
+#mov-cost-container {
+    opacity: 1;
+    visibility: visible;
+    max-height: 100px;
+    overflow: hidden;
+    transition: opacity 0.3s ease, max-height 0.3s ease;
+}
+
+#mov-cost-container.mov-cost-hidden {
+    opacity: 0;
+    visibility: hidden;
+    max-height: 0;
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+    pointer-events: none;
+}
+
+.recipe-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(6.5rem, .55fr) minmax(4.5rem, .35fr) minmax(7rem, .65fr) 2.5rem;
+    gap: .75rem;
+    align-items: start;
+}
+
+.recipe-grid > * { min-width: 0; }
+.recipe-grid.is-saving { pointer-events: none; opacity: .6; }
+.recipe-invalid { border-color: #f43f5e !important; box-shadow: 0 0 0 3px rgba(244, 63, 94, .15) !important; }
+.recipe-pending-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: .25rem;
+    margin-top: .35rem;
+    padding: .2rem .45rem;
+    border: 1px solid #fcd34d;
+    border-radius: .5rem;
+    background: #fffbeb;
+    color: #92400e;
+    font-size: .65rem;
+    font-weight: 600;
+    line-height: 1rem;
+}
+.recipe-autocomplete-results {
+    position: fixed;
+    z-index: 70;
+    max-height: 15rem;
+    overflow-y: auto;
+    border: 1px solid #cbd5e1;
+    border-radius: .5rem;
+    background: #fff;
+    color: #334155;
+    box-shadow: 0 10px 15px -3px rgb(15 23 42 / .12), 0 4px 6px -4px rgb(15 23 42 / .12);
+}
+.recipe-autocomplete-option {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    justify-content: space-between;
+    gap: .75rem;
+    padding: .625rem .75rem;
+    text-align: left;
+    cursor: pointer;
+}
+.recipe-autocomplete-option:hover,
+.recipe-autocomplete-option.is-active { background: #f8fafc; }
+.recipe-autocomplete-meta { flex-shrink: 0; color: #64748b; font-size: .75rem; white-space: nowrap; }
+.recipe-autocomplete-empty { padding: .75rem; color: #64748b; font-size: .75rem; }
+.recipe-cost-row:hover { background: #f8fafc; }
+.recipe-details-tab {
+    display: inline-flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: .5rem;
+    border-bottom: 2px solid transparent;
+    padding: .875rem .75rem;
+    color: #64748b;
+    font-size: .75rem;
+    font-weight: 600;
+    transition: color .15s ease, border-color .15s ease, background-color .15s ease;
+}
+.recipe-details-tab:hover { color: #334155; background: #f8fafc; }
+.recipe-details-tab.is-active { color: #2563eb; border-bottom-color: #2563eb; }
+.recipe-details-tab:focus-visible { outline: 2px solid #93c5fd; outline-offset: -2px; border-radius: .375rem; }
+[role="tabpanel"]:not(.hidden) { animation: recipe-tab-enter .16s ease-out; }
+@keyframes recipe-tab-enter {
+    from { opacity: 0; transform: translateY(3px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+@media (max-width: 639px) {
+    .recipe-grid:not(.recipe-grid-heading) { grid-template-columns: minmax(0, 1fr) 4rem 2.5rem; }
+    .recipe-grid:not(.recipe-grid-heading) .recipe-ingredient { grid-column: 1 / -1; }
+    .recipe-grid:not(.recipe-grid-heading) .recipe-per-unit { grid-column: 1 / 3; }
+    .recipe-grid:not(.recipe-grid-heading) .recipe-remove { grid-column: 3; grid-row: 2; }
 }

@@ -244,16 +244,17 @@ function showSection(section) {
     closeSidebar();
     const home = document.getElementById('sec-home');
     const estoque = document.getElementById('sec-estoque');
+    const receitas = document.getElementById('sec-receitas');
     const relatorio = document.getElementById('sec-relatorio');
 
-    [home, estoque, relatorio].forEach(sec => {
+    [home, estoque, receitas, relatorio].forEach(sec => {
         if (sec) {
             sec.classList.remove('active');
             sec.style.display = 'none';
         }
     });
 
-    const show = section === 'home' ? home : section === 'relatorio' ? relatorio : estoque;
+    const show = section === 'home' ? home : section === 'relatorio' ? relatorio : section === 'receitas' ? receitas : estoque;
     if (show) {
         show.style.display = 'block';
         void show.offsetWidth;
@@ -266,6 +267,8 @@ function showSection(section) {
         loadHomeDashboard();
     } else if (section === 'relatorio') {
         loadRelatorio();
+    } else if (section === 'receitas') {
+        renderRecipes();
     } else {
         renderItems();
     }
@@ -279,10 +282,17 @@ const SUPABASE_KEY = "sb_publishable_WLQdhQL9Em2-DMTmSoBOyg_-W6YHEkH";
 let supabaseClient = null;
 let currentUser = null;
 let itemsList = [];
+let currentStockTypeFilter = 'ALL';
 let relatorioData = [];
 let relatorioSortCol = null;
 let relatorioSortDir = 'desc'; // 'desc' ou 'asc'
 let currentItemId = null;
+let recipesList = [];
+let editingRecipeId = null;
+let recipeSaving = false;
+let productionSaving = false;
+const recipeIngredientCreations = new Map();
+const recipeAutocomplete = { el: null, input: null, active: -1 };
 
 function openModal(id) {
     const modal = document.getElementById(id);
@@ -320,17 +330,20 @@ function updateMovPriceLabel() {
 }
 
 function toggleMovCostField() {
-    const type = document.getElementById('mov-type').value === 'IN' ? 'ENTRADA' : 'SAIDA';
+    const isEntrada = (document.getElementById('mov-type') || {}).value === 'IN';
     const container = document.getElementById('mov-cost-container');
     const input = document.getElementById('mov-total-price');
-    if (type === 'ENTRADA') {
-        if (container) container.classList.remove('hidden');
+
+    if (container) {
+        container.classList.toggle('mov-cost-hidden', !isEntrada);
+    }
+
+    if (isEntrada) {
         if (input) {
             input.disabled = false;
             input.readOnly = false;
         }
     } else {
-        if (container) container.classList.add('hidden');
         if (input) {
             input.value = '';
             input.disabled = true;
@@ -341,7 +354,6 @@ function toggleMovCostField() {
     }
     updateMovPriceLabel();
 }
-
 try {
     if (window.supabase) {
         supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
@@ -523,6 +535,7 @@ async function renderDashboard() {
         console.error(e);
         showToast('Erro ao carregar itens: ' + (e && e.message ? e.message : e), 'error');
     }
+    await loadRecipes();
     await loadHomeDashboard();
     showSection('home');
     await checkDisplayName();
@@ -546,7 +559,7 @@ async function loadItems() {
             ...i,
             quantidade: Number(i.quantidade) || 0,
             custo_medio: Number(i.custo_medio) || 0,
-            status: i.status || (Number(i.quantidade) > 0 ? 'COM MOVIMENTAÇÕES' : 'SEM MOVIMENTAÇÕES')
+            status: i.status === 'COM MOVIMENTAÇÕES' ? 'ATIVO NO ESTOQUE' : (i.status || (Number(i.quantidade) > 0 ? 'ATIVO NO ESTOQUE' : 'SEM MOVIMENTAÇÕES'))
         }));
     } catch (err) {
         console.error('Erro ao carregar itens:', err);
@@ -558,13 +571,1085 @@ async function loadItems() {
     populateItemsDatalist();
 }
 
+async function loadRecipes() {
+    recipesList = [];
+    if (!supabaseClient || !currentUser) {
+        renderRecipes();
+        return;
+    }
+
+    try {
+        const { data: recipes, error: recipeError } = await supabaseClient
+            .from('receitas')
+            .select('id, user_id, nome, rendimento, created_at')
+            .eq('user_id', currentUser.id)
+            .order('nome', { ascending: true });
+        if (recipeError) throw recipeError;
+
+        const recipeIds = (recipes || []).map(recipe => recipe.id);
+        let recipeItems = [];
+        if (recipeIds.length > 0) {
+            const { data, error } = await supabaseClient
+                .from('receita_itens')
+                .select('id, receita_id, item_id, quantidade')
+                .eq('user_id', currentUser.id)
+                .in('receita_id', recipeIds);
+            if (error) throw error;
+            recipeItems = data || [];
+        }
+
+        recipesList = (recipes || []).map(recipe => ({
+            ...recipe,
+            rendimento: Number(recipe.rendimento) || 1,
+            itens: recipeItems
+                .filter(row => String(row.receita_id) === String(recipe.id))
+                .map(row => ({
+                    ...row,
+                    quantidade: Number(row.quantidade) || 0,
+                    item: itemsList.find(item => String(item.id) === String(row.item_id)) || null
+                }))
+        }));
+        renderRecipes();
+        renderItems();
+    } catch (error) {
+        console.error('Erro ao carregar receitas:', error);
+        renderRecipes();
+        renderItems();
+        showToast('Erro ao carregar receitas. Aplique supabase_data/05_receitas_producao.sql no Supabase, se ainda não o fez: ' + (error && error.message ? error.message : error), 'error');
+    }
+}
+
+function renderRecipes() {
+    const tbody = document.getElementById('recipes-table-body');
+    const empty = document.getElementById('recipes-empty-state');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+    if (!recipesList.length) {
+        if (empty) empty.classList.remove('hidden');
+        updateProductionRecipeOptions();
+        return;
+    }
+    if (empty) empty.classList.add('hidden');
+
+    recipesList.forEach(recipe => {
+        const row = document.createElement('tr');
+        row.className = 'hover:bg-slate-50/80 transition-colors';
+        const recipeId = escapeHtml(recipe.id);
+        row.innerHTML = `
+            <td class="px-4 sm:px-6 py-4 font-semibold text-slate-900">${escapeHtml(recipe.nome)}</td>
+            <td class="px-4 sm:px-6 py-4 whitespace-nowrap"><span class="px-2 py-1 bg-slate-100 text-slate-600 rounded text-xs font-mono">${Number(recipe.rendimento) || 1} UN</span></td>
+            <td class="px-4 sm:px-6 py-4">
+                <div class="flex items-center justify-end gap-1.5">
+                    <button type="button" onclick="openProductionModal('${recipeId}')" class="px-2.5 py-2 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 rounded-lg text-xs font-semibold whitespace-nowrap" title="Produzir" aria-label="Produzir receita">
+                        <i data-lucide="factory" class="w-4 h-4 inline-block align-middle"></i><span class="hidden sm:inline ml-1">Produzir</span>
+                    </button>
+                    <button type="button" onclick="openRecipeDetails('${recipeId}')" class="p-2 text-slate-500 hover:text-brand-700 hover:bg-brand-50 rounded-lg" title="Visualizar composição de custos" aria-label="Visualizar detalhes e custos da receita">
+                        <i data-lucide="eye" class="w-4 h-4 inline-block align-middle"></i><span class="hidden sm:inline ml-1 text-xs font-semibold">Detalhes</span>
+                    </button>
+                    <button type="button" onclick="editRecipe('${recipeId}')" class="p-2 text-slate-500 hover:text-brand-700 hover:bg-brand-50 rounded-lg" aria-label="Editar receita">
+                        <i data-lucide="pencil" class="w-4 h-4 inline-block align-middle"></i><span class="hidden sm:inline ml-1 text-xs font-semibold">Editar</span>
+                    </button>
+                    <button type="button" onclick="deleteRecipe('${recipeId}')" class="p-2 text-slate-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg" aria-label="Excluir receita">
+                        <i data-lucide="trash-2" class="w-4 h-4 inline-block align-middle"></i><span class="hidden sm:inline ml-1 text-xs font-semibold">Excluir</span>
+                    </button>
+                </div>
+            </td>`;
+        tbody.appendChild(row);
+    });
+    updateProductionRecipeOptions();
+    if (window.lucide) lucide.createIcons();
+}
+
+function openRecipeDetails(recipeId) {
+    const recipe = recipesList.find(entry => String(entry.id) === String(recipeId));
+    if (!recipe) {
+        showToast('Receita não encontrada.', 'error');
+        return;
+    }
+
+    const recipeYield = Number(recipe.rendimento) || 1;
+    const tbody = document.getElementById('recipe-details-items');
+    const fullTbody = document.getElementById('recipe-details-full-items');
+    const empty = document.getElementById('recipe-details-empty');
+    const fullEmpty = document.getElementById('recipe-details-full-empty');
+    const missingWarning = document.getElementById('recipe-details-missing-warning');
+    const fullMissingWarning = document.getElementById('recipe-details-full-missing-warning');
+    let unitCostTotal = 0;
+    let batchCostTotal = 0;
+    let hasMissingItems = false;
+    tbody.innerHTML = '';
+    fullTbody.innerHTML = '';
+
+    const costRows = (recipe.itens || []).map(recipeItem => {
+        const item = itemsList.find(entry => String(entry.id) === String(recipeItem.item_id));
+        const unit = item ? String(item.unidade || '') : '';
+        const quantityTotal = Number(recipeItem.quantidade) || 0;
+        const quantityPerUnit = quantityTotal / recipeYield;
+        const avgUnitCost = item ? Number(item.custo_medio) || 0 : null;
+        const unitSubtotal = avgUnitCost === null ? null : quantityPerUnit * avgUnitCost;
+        const batchSubtotal = avgUnitCost === null ? null : quantityTotal * avgUnitCost;
+        if (batchSubtotal === null) {
+            hasMissingItems = true;
+        } else {
+            unitCostTotal += unitSubtotal;
+            batchCostTotal += batchSubtotal;
+        }
+        return { item, unit, quantityTotal, quantityPerUnit, avgUnitCost, unitSubtotal, batchSubtotal };
+    });
+
+    costRows.forEach(({ item, unit, quantityTotal, quantityPerUnit, avgUnitCost, unitSubtotal, batchSubtotal }) => {
+        const row = document.createElement('tr');
+        row.className = 'recipe-cost-row';
+        row.innerHTML = `
+            <td class="px-4 py-3">
+                <span class="font-semibold text-slate-800">${escapeHtml(item ? item.titulo : 'Insumo não encontrado')}</span>
+                <span class="block text-[11px] text-slate-500">${escapeHtml(item ? unit || '—' : '—')}</span>
+            </td>
+            <td class="px-4 py-3 text-right whitespace-nowrap">${quantityPerUnit.toLocaleString('pt-BR', { maximumFractionDigits: 3 })} ${escapeHtml(unit)}</td>
+            <td class="px-4 py-3 text-right whitespace-nowrap">${item ? `${formatUnitCost(avgUnitCost)}${unit ? ` / ${escapeHtml(unit.toLowerCase())}` : ''}` : '—'}</td>
+            <td class="px-4 py-3 text-right font-semibold text-slate-800 whitespace-nowrap">${unitSubtotal === null ? '—' : formatCurrency(unitSubtotal)}</td>`;
+        tbody.appendChild(row);
+
+        const fullRow = document.createElement('tr');
+        fullRow.className = 'recipe-cost-row';
+        const share = batchSubtotal === null || hasMissingItems || batchCostTotal === 0
+            ? null
+            : (batchSubtotal / batchCostTotal) * 100;
+        fullRow.innerHTML = `
+            <td class="px-4 py-3">
+                <span class="font-semibold text-slate-800">${escapeHtml(item ? item.titulo : 'Insumo não encontrado')}</span>
+                <span class="block text-[11px] text-slate-500">${escapeHtml(unit || '—')}</span>
+            </td>
+            <td class="px-4 py-3 text-right whitespace-nowrap">${quantityTotal.toLocaleString('pt-BR', { maximumFractionDigits: 3 })} ${escapeHtml(unit)}</td>
+            <td class="px-4 py-3 text-right whitespace-nowrap">${item ? `${formatUnitCost(avgUnitCost)}${unit ? ` / ${escapeHtml(unit.toLowerCase())}` : ''}` : '—'}</td>
+            <td class="px-4 py-3 text-right font-semibold text-slate-800 whitespace-nowrap">${batchSubtotal === null ? '—' : formatCurrency(batchSubtotal)}</td>
+            <td class="px-4 py-3 text-right whitespace-nowrap">
+                ${share === null
+                    ? '<span class="text-slate-400">—</span>'
+                    : `<div class="flex items-center justify-end gap-2"><span class="text-xs font-semibold">${share.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%</span><span class="h-1.5 w-16 overflow-hidden rounded-full bg-slate-100"><span class="block h-full rounded-full bg-brand-500" style="width:${Math.min(share, 100)}%"></span></span></div>`}
+            </td>`;
+        fullTbody.appendChild(fullRow);
+    });
+
+    document.getElementById('recipe-details-name').textContent = recipe.nome;
+    document.getElementById('recipe-details-yield').textContent = `Rendimento padrão: ${recipeYield.toLocaleString('pt-BR')} UN`;
+    document.getElementById('recipe-details-full-tab-label').textContent = `Receita Completa (Lote de ${recipeYield.toLocaleString('pt-BR')} UN)`;
+    document.getElementById('recipe-details-unit-cost').textContent = hasMissingItems ? 'Incompleto' : formatCurrency(unitCostTotal);
+    document.getElementById('recipe-details-batch-cost').textContent = hasMissingItems ? 'Incompleto' : formatCurrency(batchCostTotal);
+    document.getElementById('recipe-details-full-cost').textContent = hasMissingItems ? 'Incompleto' : formatCurrency(batchCostTotal);
+    document.getElementById('recipe-details-full-yield').textContent = `Lote base para ${recipeYield.toLocaleString('pt-BR')} UN`;
+    missingWarning.classList.toggle('hidden', !hasMissingItems);
+    fullMissingWarning.classList.toggle('hidden', !hasMissingItems);
+    empty.classList.toggle('hidden', costRows.length > 0);
+    fullEmpty.classList.toggle('hidden', costRows.length > 0);
+    setRecipeDetailsTab('unit');
+    openModal('modal-receita-details');
+    loadRecipeCostHistory(recipe);
+    if (window.lucide) lucide.createIcons();
+}
+
+function setRecipeDetailsTab(tab) {
+    const isFull = tab === 'full';
+    const unitTab = document.getElementById('recipe-details-tab-unit');
+    const fullTab = document.getElementById('recipe-details-tab-full');
+    const unitPanel = document.getElementById('recipe-details-panel-unit');
+    const fullPanel = document.getElementById('recipe-details-panel-full');
+    unitTab.classList.toggle('is-active', !isFull);
+    fullTab.classList.toggle('is-active', isFull);
+    unitTab.setAttribute('aria-selected', String(!isFull));
+    fullTab.setAttribute('aria-selected', String(isFull));
+    unitPanel.classList.toggle('hidden', isFull);
+    fullPanel.classList.toggle('hidden', !isFull);
+    if (window.lucide) lucide.createIcons();
+}
+
+let recipeCostHistory = [];
+let recipeCostHistoryRecipeId = null;
+let recipeCostChart = null;
+
+async function loadRecipeCostHistory(recipe) {
+    recipeCostHistoryRecipeId = String(recipe.id);
+    recipeCostHistory = [];
+    setRecipeCostChartMessage('Carregando histórico de custos...', true);
+    if (recipeCostChart) {
+        recipeCostChart.destroy();
+        recipeCostChart = null;
+    }
+
+    const recipeItems = recipe.itens || [];
+    const ingredientIds = [...new Set(recipeItems.map(row => String(row.item_id)))];
+    if (ingredientIds.length === 0) {
+        renderRecipeCostHistory(recipe, []);
+        return;
+    }
+
+    if (recipeItems.some(row => !itemsList.some(item => String(item.id) === String(row.item_id)))) {
+        renderRecipeCostHistory(recipe, [], 'O gráfico não pode ser calculado porque há insumo(s) da receita que não foram encontrados no estoque.');
+        return;
+    }
+    if (!supabaseClient || !currentUser || String(currentUser.id).startsWith('offline-')) {
+        renderRecipeCostHistory(recipe, [], 'O histórico de custos não está disponível nesta sessão.');
+        return;
+    }
+
+    try {
+        const history = [];
+        const pageSize = 1000;
+        for (let from = 0; ; from += pageSize) {
+            const { data, error } = await supabaseClient
+                .from('historico')
+                .select('item_id, tipo, quantidade, custo_unitario, created_at')
+                .eq('user_id', currentUser.id)
+                .in('item_id', ingredientIds)
+                .order('created_at', { ascending: true })
+                .range(from, from + pageSize - 1);
+            if (error) throw error;
+            history.push(...(data || []));
+            if (!data || data.length < pageSize) break;
+        }
+        if (recipeCostHistoryRecipeId !== String(recipe.id)) return;
+        recipeCostHistory = history;
+        renderRecipeCostHistory(recipe, history);
+    } catch (error) {
+        console.error('Erro ao carregar histórico de custos da receita:', error);
+        renderRecipeCostHistory(recipe, [], 'Não foi possível carregar o histórico de custos.');
+        showToast('Erro ao carregar histórico de custos da receita: ' + (error && error.message ? error.message : error), 'error');
+    }
+}
+
+function setRecipeCostChartMessage(message, visible) {
+    const messageElement = document.getElementById('recipe-cost-chart-message');
+    const chartWrap = document.getElementById('recipe-cost-chart-wrap');
+    if (!messageElement || !chartWrap) return;
+    messageElement.textContent = message || '';
+    messageElement.classList.toggle('hidden', !visible);
+    chartWrap.classList.toggle('hidden', visible);
+}
+
+function applyRecipeCostDateFilter() {
+    const recipe = recipesList.find(entry => String(entry.id) === recipeCostHistoryRecipeId);
+    if (recipe) renderRecipeCostHistory(recipe, recipeCostHistory);
+}
+
+function clearRecipeCostDateFilter() {
+    document.getElementById('recipe-cost-date-start').value = '';
+    document.getElementById('recipe-cost-date-end').value = '';
+    applyRecipeCostDateFilter();
+}
+
+function renderRecipeCostHistory(recipe, history, message = '') {
+    const startValue = document.getElementById('recipe-cost-date-start').value;
+    const endValue = document.getElementById('recipe-cost-date-end').value;
+    const minValueElement = document.getElementById('recipe-cost-min-value');
+    const maxValueElement = document.getElementById('recipe-cost-max-value');
+    const minDateElement = document.getElementById('recipe-cost-min-date');
+    const maxDateElement = document.getElementById('recipe-cost-max-date');
+    if (recipeCostChart) {
+        recipeCostChart.destroy();
+        recipeCostChart = null;
+    }
+    minValueElement.textContent = '—';
+    maxValueElement.textContent = '—';
+    minDateElement.textContent = '';
+    maxDateElement.textContent = '';
+
+    if (message) {
+        setRecipeCostChartMessage(message, true);
+        return;
+    }
+
+    const recipeItems = recipe.itens || [];
+    if (recipeItems.length === 0 || history.length === 0) {
+        setRecipeCostChartMessage('Ainda não há movimentações de insumos suficientes para exibir a evolução do custo.', true);
+        return;
+    }
+
+    const fromDate = startValue ? new Date(`${startValue}T00:00:00`) : null;
+    const toDateExclusive = endValue ? new Date(`${endValue}T00:00:00`) : null;
+    if (toDateExclusive) toDateExclusive.setDate(toDateExclusive.getDate() + 1);
+    if (fromDate && toDateExclusive && fromDate >= toDateExclusive) {
+        setRecipeCostChartMessage('A data inicial deve ser anterior ou igual à data final.', true);
+        return;
+    }
+
+    const itemCosts = new Map();
+    const points = [];
+    let index = 0;
+    const sortedHistory = history.slice().sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+    while (index < sortedHistory.length) {
+        const timestamp = new Date(sortedHistory[index].created_at).getTime();
+        const group = [];
+        while (index < sortedHistory.length && new Date(sortedHistory[index].created_at).getTime() === timestamp) {
+            group.push(sortedHistory[index]);
+            index++;
+        }
+
+        group.forEach(movement => {
+            const itemId = String(movement.item_id);
+            const quantity = Number(movement.quantidade) || 0;
+            const movementCost = Number(movement.custo_unitario) || 0;
+            const state = itemCosts.get(itemId) || { quantity: 0, averageCost: 0, initialized: false };
+            if (movement.tipo === 'ENTRADA' || movement.tipo === 'CADASTRO') {
+                const newQuantity = state.quantity + quantity;
+                state.averageCost = newQuantity > 0
+                    ? ((state.quantity * state.averageCost) + (quantity * movementCost)) / newQuantity
+                    : movementCost;
+                state.quantity = newQuantity;
+                state.initialized = true;
+            } else if (movement.tipo === 'SAIDA') {
+                state.quantity = Math.max(0, state.quantity - quantity);
+            }
+            itemCosts.set(itemId, state);
+        });
+
+        const allCostsAvailable = recipeItems.every(row => {
+            const state = itemCosts.get(String(row.item_id));
+            return state && state.initialized;
+        });
+        if (!allCostsAvailable) continue;
+
+        const unitCost = recipeItems.reduce((total, row) => {
+            const state = itemCosts.get(String(row.item_id));
+            return total + ((Number(row.quantidade) || 0) / (Number(recipe.rendimento) || 1)) * state.averageCost;
+        }, 0);
+        if ((!fromDate || timestamp >= fromDate.getTime()) &&
+            (!toDateExclusive || timestamp < toDateExclusive.getTime())) {
+            points.push({ timestamp, value: unitCost });
+        }
+    }
+
+    if (points.length === 0) {
+        setRecipeCostChartMessage('Não há dados de custo para o período selecionado.', true);
+        return;
+    }
+
+    const minimum = points.reduce((best, point) => point.value < best.value ? point : best);
+    const maximum = points.reduce((best, point) => point.value > best.value ? point : best);
+    const dateFormat = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+    minValueElement.textContent = formatCurrency(minimum.value);
+    maxValueElement.textContent = formatCurrency(maximum.value);
+    minDateElement.textContent = dateFormat.format(new Date(minimum.timestamp));
+    maxDateElement.textContent = dateFormat.format(new Date(maximum.timestamp));
+
+    const canvas = document.getElementById('recipe-cost-chart');
+    if (!window.Chart || !canvas) {
+        setRecipeCostChartMessage('Não foi possível inicializar o gráfico.', true);
+        return;
+    }
+    setRecipeCostChartMessage('', false);
+    const minimumValue = minimum.value;
+    const maximumValue = maximum.value;
+    const ctx = canvas.getContext('2d');
+    const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+    gradient.addColorStop(0, 'rgba(2, 132, 199, 0.2)');
+    gradient.addColorStop(1, 'rgba(2, 132, 199, 0.02)');
+    recipeCostChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: points.map(point => dateFormat.format(new Date(point.timestamp))),
+            datasets: [{
+                label: 'Custo de produção por unidade',
+                data: points.map(point => point.value),
+                borderColor: '#0284c7',
+                backgroundColor: gradient,
+                fill: true,
+                tension: 0.25,
+                pointRadius: points.map(point => point.value === minimumValue || point.value === maximumValue ? 5 : 2),
+                pointBackgroundColor: points.map(point => point.value === minimumValue ? '#10b981' : (point.value === maximumValue ? '#f43f5e' : '#0284c7')),
+                pointBorderColor: points.map(point => point.value === minimumValue ? '#10b981' : (point.value === maximumValue ? '#f43f5e' : '#0284c7'))
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { intersect: false, mode: 'index' },
+            plugins: {
+                legend: { display: true, labels: { color: '#64748b', font: { size: 11 } } },
+                tooltip: { callbacks: { label: context => ` Custo: ${formatCurrency(context.parsed.y)}` } }
+            },
+            scales: {
+                x: { ticks: { color: '#64748b', maxRotation: 45, minRotation: 0, autoSkip: true }, grid: { color: 'rgba(100, 116, 139, 0.1)' } },
+                y: { beginAtZero: true, ticks: { color: '#64748b', callback: value => formatCurrency(value) }, grid: { color: 'rgba(100, 116, 139, 0.1)' } }
+            }
+        }
+    });
+}
+
+function updateProductionRecipeOptions(selectedId) {
+    const select = document.getElementById('production-recipe');
+    if (!select) return;
+    const currentValue = selectedId || select.value;
+    select.innerHTML = '<option value="">Selecione uma receita...</option>' + recipesList.map(recipe =>
+        `<option value="${escapeHtml(recipe.id)}">${escapeHtml(recipe.nome)}</option>`
+    ).join('');
+    if (currentValue && recipesList.some(recipe => String(recipe.id) === String(currentValue))) {
+        select.value = currentValue;
+    }
+    select.disabled = recipesList.length === 0;
+    updateProductionPreview();
+}
+
+function openNewRecipeModal() {
+    editingRecipeId = null;
+    document.getElementById('recipe-name').value = '';
+    document.getElementById('recipe-yield').value = '1';
+    document.getElementById('recipe-modal-title').textContent = 'Nova Receita';
+    document.getElementById('recipe-submit').textContent = 'Salvar Receita';
+    document.getElementById('recipe-items').innerHTML = '';
+    document.getElementById('recipe-yield').oninput = updateRecipeItemPreviews;
+    addRecipeItemRow();
+    openModal('modal-receita');
+}
+
+function ensureRecipeAutocomplete() {
+    if (recipeAutocomplete.el) return recipeAutocomplete.el;
+    const list = document.createElement('div');
+    list.id = 'recipe-autocomplete';
+    list.className = 'recipe-autocomplete-results hidden';
+    list.setAttribute('role', 'listbox');
+    list.addEventListener('mousedown', event => {
+        event.preventDefault();
+        const option = event.target.closest('.recipe-autocomplete-option');
+        if (option) selectRecipeAutocompleteOption(option);
+    });
+    document.body.appendChild(list);
+    recipeAutocomplete.el = list;
+    return list;
+}
+
+function showRecipeAutocomplete(input) {
+    const list = ensureRecipeAutocomplete();
+    const query = normalizeName(input.value);
+    const matches = (itemsList || []).filter(item =>
+        !query || normalizeName(item.titulo).includes(query)
+    );
+    const exactItem = findItemByName(input.value);
+    const options = matches.map(item => {
+        const stock = Number(item.quantidade).toLocaleString('pt-BR');
+        const pending = item.status === 'CADASTRO PENDENTE' ? ' · Pendente' : '';
+        const details = `${escapeHtml(item.unidade)} · ${stock}${pending}`;
+        return `<button type="button" class="recipe-autocomplete-option" role="option" data-item-id="${escapeHtml(item.id)}">
+            <span class="truncate">${escapeHtml(item.titulo)}</span>
+            <span class="recipe-autocomplete-meta">${details}</span>
+        </button>`;
+    }).join('');
+    const createOption = query && !exactItem
+        ? `<button type="button" class="recipe-autocomplete-option border-t border-slate-100 text-brand-700" role="option" data-create="true">
+            <span>Cadastrar “${escapeHtml(input.value.trim())}” como novo insumo</span>
+            <span class="recipe-autocomplete-meta">Estoque zerado</span>
+        </button>`
+        : '';
+    list.innerHTML = options || createOption
+        ? options + createOption
+        : '<div class="recipe-autocomplete-empty">Nenhum insumo cadastrado.</div>';
+    recipeAutocomplete.input = input;
+    recipeAutocomplete.active = -1;
+
+    const rect = input.getBoundingClientRect();
+    list.style.left = `${rect.left}px`;
+    list.style.width = `${rect.width}px`;
+    list.style.top = `${rect.bottom + 4}px`;
+    list.classList.remove('hidden');
+    input.setAttribute('aria-expanded', 'true');
+    if (rect.bottom + 4 + list.offsetHeight > window.innerHeight - 8 && rect.top - 4 - list.offsetHeight > 8) {
+        list.style.top = `${rect.top - 4 - list.offsetHeight}px`;
+    }
+}
+
+function hideRecipeAutocomplete() {
+    if (recipeAutocomplete.el) recipeAutocomplete.el.classList.add('hidden');
+    if (recipeAutocomplete.input) recipeAutocomplete.input.setAttribute('aria-expanded', 'false');
+    recipeAutocomplete.input = null;
+    recipeAutocomplete.active = -1;
+}
+
+function selectRecipeAutocompleteOption(option) {
+    const input = recipeAutocomplete.input;
+    if (!input) return;
+    const row = input.closest('.recipe-grid');
+    const unitSelect = row.querySelector('.recipe-new-unit');
+    hideRecipeAutocomplete();
+    if (option.dataset.create === 'true') {
+        ensureRecipeIngredient(input, unitSelect).catch(error => {
+            console.error('Erro ao preparar insumo da receita:', error);
+            showToast('Não foi possível cadastrar o insumo: ' + error.message, 'error');
+        });
+        return;
+    }
+
+    const item = itemsList.find(entry => String(entry.id) === String(option.dataset.itemId));
+    if (!item) return;
+    input.value = item.titulo;
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    row.querySelector('.recipe-qty').focus({ preventScroll: true });
+}
+
+function moveRecipeAutocompleteActive(delta) {
+    const options = recipeAutocomplete.el.querySelectorAll('.recipe-autocomplete-option');
+    if (!options.length) return;
+    recipeAutocomplete.active = (recipeAutocomplete.active + delta + options.length) % options.length;
+    options.forEach((option, index) => {
+        const active = index === recipeAutocomplete.active;
+        option.classList.toggle('is-active', active);
+        option.setAttribute('aria-selected', String(active));
+    });
+    options[recipeAutocomplete.active].scrollIntoView({ block: 'nearest' });
+}
+
+function updateRecipeIngredientRow(row) {
+    if (!row) return;
+    const input = row.querySelector('.recipe-item');
+    const unitSelect = row.querySelector('.recipe-new-unit');
+    const badge = row.querySelector('.recipe-pending-badge');
+    const item = findItemByName(input.value);
+
+    input.dataset.itemId = item ? String(item.id) : '';
+    unitSelect.disabled = !!item;
+    if (item) unitSelect.value = item.unidade;
+    const pending = !!input.value.trim() && (!item || Number(item.quantidade) <= 0 || item.status === 'CADASTRO PENDENTE');
+    badge.classList.toggle('hidden', !pending);
+    updateRecipeItemPreviews();
+}
+
+async function setPendingStatusIfNeverReceived(item) {
+    if (item.status === 'CADASTRO PENDENTE') return item;
+    if (item.status === 'ATIVO NO ESTOQUE' || Number(item.quantidade) > 0) {
+        if (Number(item.quantidade) > 0) item.status = 'ATIVO NO ESTOQUE';
+        return item;
+    }
+    if (!supabaseClient || !currentUser || String(item.id).startsWith('local-')) {
+        item.status = 'CADASTRO PENDENTE';
+        return item;
+    }
+
+    const { data, error } = await supabaseClient
+        .from('historico')
+        .select('id')
+        .eq('user_id', currentUser.id)
+        .eq('item_id', item.id)
+        .eq('tipo', 'ENTRADA')
+        .limit(1);
+    if (error) throw error;
+
+    const status = data && data.length ? 'ATIVO NO ESTOQUE' : 'CADASTRO PENDENTE';
+    if (item.status !== status) {
+        const { error: updateError } = await supabaseClient
+            .from('itens')
+            .update({ status })
+            .eq('id', item.id)
+            .eq('user_id', currentUser.id);
+        if (updateError) throw updateError;
+        item.status = status;
+        renderItems();
+        updateStats();
+    }
+    return item;
+}
+
+async function ensureRecipeIngredient(input, unitSelect) {
+    const title = formatItemName(input.value);
+    if (!title) throw new Error('Informe o nome do insumo.');
+    const existing = findItemByName(title);
+    if (existing) {
+        input.value = existing.titulo;
+        input.dataset.itemId = String(existing.id);
+        unitSelect.value = existing.unidade;
+        unitSelect.disabled = true;
+        await setPendingStatusIfNeverReceived(existing);
+        updateRecipeIngredientRow(input.closest('.recipe-grid'));
+        return existing;
+    }
+    if (!supabaseClient || !currentUser) throw new Error('Supabase não disponível para cadastrar o insumo.');
+    if (!unitSelect.value) throw new Error(`Selecione a unidade do insumo "${title}".`);
+
+    const key = normalizeName(title);
+    let creation = recipeIngredientCreations.get(key);
+    if (!creation) {
+        creation = (async () => {
+            const { data, error } = await supabaseClient.from('itens').insert([{
+                id: generateId(),
+                codigo: generateItemCode(),
+                user_id: currentUser.id,
+                titulo: title,
+                unidade: unitSelect.value,
+                quantidade: 0,
+                custo_medio: 0,
+                status: 'CADASTRO PENDENTE'
+            }]).select().single();
+            if (error) throw error;
+
+            const created = normalizeItem(data);
+            itemsList.unshift(created);
+            renderItems();
+            updateStats();
+            populateItemsDatalist();
+            return created;
+        })();
+        recipeIngredientCreations.set(key, creation);
+    }
+
+    let created;
+    try {
+        created = await creation;
+    } finally {
+        if (recipeIngredientCreations.get(key) === creation) recipeIngredientCreations.delete(key);
+    }
+    input.value = created.titulo;
+    input.dataset.itemId = String(created.id);
+    unitSelect.value = created.unidade;
+    unitSelect.disabled = true;
+    updateRecipeIngredientRow(input.closest('.recipe-grid'));
+    return created;
+}
+
+function addRecipeItemRow(value) {
+    const wrap = document.getElementById('recipe-items');
+    if (!wrap) return;
+    const row = document.createElement('div');
+    row.className = 'recipe-grid items-start p-3 sm:p-0 border border-slate-200 sm:border-0 rounded-xl bg-slate-50/60 sm:bg-transparent';
+    row.innerHTML = `
+        <div class="recipe-ingredient min-w-0">
+            <label class="block sm:hidden text-[10px] font-semibold uppercase text-slate-500 mb-1">Insumo cadastrado</label>
+            <input type="text" autocomplete="off" class="recipe-item w-full h-10 px-3 bg-white border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" placeholder="Selecione ou digite um insumo" aria-label="Insumo" role="combobox" aria-autocomplete="list" aria-expanded="false">
+            <span class="recipe-pending-badge hidden" role="status">⚠️ Cadastro Pendente (Estoque Zerado)</span>
+        </div>
+        <div>
+            <label class="block sm:hidden text-[10px] font-semibold uppercase text-slate-500 mb-1">Total na receita</label>
+            <input type="text" inputmode="decimal" autocomplete="off" data-mask="quantity" class="recipe-qty w-full h-10 px-3 bg-white border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" placeholder="Ex: 395" aria-label="Quantidade total na receita">
+        </div>
+        <div class="text-xs font-mono font-semibold text-slate-600">
+            <label class="block sm:hidden text-[10px] font-semibold uppercase text-slate-500 mb-1">Unidade</label>
+            <select class="recipe-new-unit h-10 w-full px-2 bg-white border border-slate-300 rounded-lg text-xs font-mono focus:outline-none focus:ring-2 focus:ring-brand-500" aria-label="Unidade do insumo">
+                <option value="">Selecione</option><option value="GR">GR</option><option value="UN">UN</option><option value="ML">ML</option>
+            </select>
+        </div>
+        <div class="recipe-per-unit flex h-10 items-center text-xs font-semibold text-brand-700">
+            <span class="recipe-consumption">—</span>
+        </div>
+        <button type="button" class="recipe-remove w-10 h-10 flex items-center justify-center text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg" aria-label="Remover insumo">
+            <i data-lucide="trash-2" class="w-4 h-4"></i>
+        </button>`;
+    wrap.appendChild(row);
+    const input = row.querySelector('.recipe-item');
+    const unitSelect = row.querySelector('.recipe-new-unit');
+    const qty = row.querySelector('.recipe-qty');
+    if (value) {
+        const item = itemsList.find(entry => String(entry.id) === String(value.item_id));
+        input.value = item ? item.titulo : '';
+        if (!item) input.dataset.itemId = String(value.item_id);
+        if (item) unitSelect.value = item.unidade;
+        qty.value = String(value.quantidade).replace('.', ',');
+    }
+    input.addEventListener('input', () => {
+        input.classList.remove('recipe-invalid');
+        updateRecipeIngredientRow(row);
+        showRecipeAutocomplete(input);
+    });
+    input.addEventListener('focus', () => showRecipeAutocomplete(input));
+    input.addEventListener('keydown', event => {
+        const isOpen = recipeAutocomplete.input === input && !recipeAutocomplete.el.classList.contains('hidden');
+        if (event.key === 'ArrowDown') {
+            event.preventDefault();
+            if (!isOpen) showRecipeAutocomplete(input);
+            else moveRecipeAutocompleteActive(1);
+        } else if (event.key === 'ArrowUp' && isOpen) {
+            event.preventDefault();
+            moveRecipeAutocompleteActive(-1);
+        } else if (event.key === 'Enter' && isOpen && recipeAutocomplete.active >= 0) {
+            event.preventDefault();
+            const option = recipeAutocomplete.el.querySelectorAll('.recipe-autocomplete-option')[recipeAutocomplete.active];
+            if (option) selectRecipeAutocompleteOption(option);
+        } else if (event.key === 'Escape' && isOpen) {
+            event.preventDefault();
+            hideRecipeAutocomplete();
+        }
+    });
+    input.addEventListener('blur', () => {
+        input.setAttribute('aria-expanded', 'false');
+        setTimeout(() => {
+            if (recipeAutocomplete.input === input) hideRecipeAutocomplete();
+        }, 120);
+    });
+    input.addEventListener('change', () => {
+        hideRecipeAutocomplete();
+        updateRecipeIngredientRow(row);
+        if (input.value.trim() && (findItemByName(input.value) || unitSelect.value)) ensureRecipeIngredient(input, unitSelect).catch(error => {
+            console.error('Erro ao preparar insumo da receita:', error);
+            showToast('Não foi possível cadastrar o insumo: ' + error.message, 'error');
+        });
+    });
+    unitSelect.addEventListener('change', () => {
+        updateRecipeIngredientRow(row);
+        if (input.value.trim() && !findItemByName(input.value)) ensureRecipeIngredient(input, unitSelect).catch(error => {
+            console.error('Erro ao preparar insumo da receita:', error);
+            showToast('Não foi possível cadastrar o insumo: ' + error.message, 'error');
+        });
+    });
+    qty.addEventListener('input', () => qty.classList.remove('recipe-invalid'));
+    qty.addEventListener('input', updateRecipeItemPreviews);
+    row.querySelector('.recipe-remove').addEventListener('click', () => row.remove());
+    updateRecipeIngredientRow(row);
+    updateRecipeItemPreviews();
+    if (window.lucide) lucide.createIcons();
+}
+
+function editRecipe(recipeId) {
+    const recipe = recipesList.find(entry => String(entry.id) === String(recipeId));
+    if (!recipe) {
+        showToast('Receita não encontrada.', 'error');
+        return;
+    }
+    editingRecipeId = recipe.id;
+    document.getElementById('recipe-name').value = recipe.nome;
+    document.getElementById('recipe-yield').value = String(Number(recipe.rendimento) || 1);
+    document.getElementById('recipe-yield').oninput = updateRecipeItemPreviews;
+    document.getElementById('recipe-modal-title').textContent = 'Editar Receita';
+    document.getElementById('recipe-submit').textContent = 'Salvar Alterações';
+    const wrap = document.getElementById('recipe-items');
+    wrap.innerHTML = '';
+    recipe.itens.forEach(row => addRecipeItemRow(row));
+    openModal('modal-receita');
+}
+
+function updateRecipeItemPreviews() {
+    const yieldInput = document.getElementById('recipe-yield');
+    const recipeYield = Number(yieldInput && yieldInput.value);
+    document.querySelectorAll('#recipe-items .recipe-grid').forEach(row => {
+        const quantity = parseQuantityInput(row.querySelector('.recipe-qty').value);
+        const unit = row.querySelector('.recipe-new-unit').value;
+        const preview = row.querySelector('.recipe-consumption');
+        preview.textContent = recipeYield > 0 && quantity > 0 && unit
+            ? `${(quantity / recipeYield).toLocaleString('pt-BR', { maximumFractionDigits: 3 })} ${unit}/UN`
+            : '—';
+    });
+}
+
+function collectRecipeItems() {
+    const rows = Array.from(document.querySelectorAll('#recipe-items .recipe-grid'));
+    const entries = [];
+    const seen = new Set();
+    let firstInvalid = null;
+    let message = '';
+    const flag = (field, text) => {
+        field.classList.add('recipe-invalid');
+        if (!firstInvalid) {
+            firstInvalid = field;
+            message = text;
+        }
+    };
+
+    rows.forEach((row, index) => {
+        const itemInput = row.querySelector('.recipe-item');
+        const unitSelect = row.querySelector('.recipe-new-unit');
+        const quantityInput = row.querySelector('.recipe-qty');
+        const name = formatItemName(itemInput.value);
+        const item = findItemByName(name);
+        const quantity = parseQuantityInput(quantityInput.value);
+        if (!name && !quantityInput.value.trim()) return;
+        if (!name) flag(itemInput, `Ingrediente ${index + 1}: informe o nome do insumo.`);
+        if (!quantityInput.value.trim() || quantity <= 0) flag(quantityInput, `Ingrediente ${index + 1}: informe uma quantidade maior que zero.`);
+        if (name && seen.has(normalizeName(name))) flag(itemInput, 'Cada insumo deve aparecer apenas uma vez na receita.');
+        if (name) seen.add(normalizeName(name));
+        if (name && !item && !unitSelect.value) flag(unitSelect, `Ingrediente ${index + 1}: selecione a unidade do insumo.`);
+        if (name && quantity > 0) entries.push({
+            item_id: item ? item.id : null,
+            name,
+            unit: item ? item.unidade : unitSelect.value,
+            quantidade: quantity
+        });
+    });
+    return { entries, firstInvalid, message };
+}
+
+async function saveRecipe() {
+    if (recipeSaving) return;
+    if (!supabaseClient || !currentUser) {
+        showToast('Supabase não disponível.', 'error');
+        return;
+    }
+    const nameInput = document.getElementById('recipe-name');
+    const rawName = nameInput.value.trim().replace(/\s+/g, ' ');
+    const name = formatItemName(rawName);
+    const yieldInput = document.getElementById('recipe-yield');
+    const recipeYield = Number(yieldInput.value);
+    if (!name) {
+        showToast('Informe o nome do Produto Acabado.', 'error');
+        nameInput.focus();
+        return;
+    }
+    if (!Number.isSafeInteger(recipeYield) || recipeYield <= 0 || recipeYield > 2147483647) {
+        showToast('Informe um rendimento inteiro maior que zero.', 'error');
+        yieldInput.focus();
+        return;
+    }
+    if (recipesList.some(recipe => normalizeName(recipe.nome) === normalizeName(name) && String(recipe.id) !== String(editingRecipeId))) {
+        showToast('Já existe uma receita com esse nome.', 'error');
+        nameInput.focus();
+        return;
+    }
+    const { entries, firstInvalid, message } = collectRecipeItems();
+    if (firstInvalid) {
+        showToast(message, 'error');
+        firstInvalid.focus();
+        return;
+    }
+    if (entries.length === 0) {
+        showToast('Adicione ao menos um insumo à ficha técnica.', 'error');
+        return;
+    }
+
+    recipeSaving = true;
+    const button = document.getElementById('recipe-submit');
+    const rows = document.getElementById('recipe-items');
+    const previousRecipe = recipesList.find(recipe => String(recipe.id) === String(editingRecipeId));
+    const recipeNameChanged = previousRecipe && normalizeName(previousRecipe.nome) !== normalizeName(name);
+    button.disabled = true;
+    button.textContent = 'Salvando...';
+    rows.classList.add('is-saving');
+    try {
+        for (const entry of entries) {
+            const row = Array.from(rows.querySelectorAll('.recipe-grid')).find(candidate =>
+                normalizeName(candidate.querySelector('.recipe-item').value) === normalizeName(entry.name)
+            );
+            const ingredientInput = row.querySelector('.recipe-item');
+            const unitSelect = row.querySelector('.recipe-new-unit');
+            const item = await ensureRecipeIngredient(ingredientInput, unitSelect);
+            entry.item_id = item.id;
+            entry.unit = item.unidade;
+        }
+        const { error } = await supabaseClient.rpc('salvar_receita', {
+            p_receita_id: editingRecipeId,
+            p_user_id: currentUser.id,
+            p_nome: name,
+            p_rendimento: recipeYield,
+            p_itens: entries.map(entry => ({ item_id: entry.item_id, quantidade: entry.quantidade }))
+        });
+        if (error) throw error;
+        closeModal('modal-receita');
+        await loadRecipes();
+        if (recipeNameChanged) await loadItems();
+        showToast('Receita salva com sucesso.', 'success');
+    } catch (error) {
+        console.error('Erro ao salvar receita:', error);
+        showToast('Erro ao salvar receita: ' + (error && error.message ? error.message : error), 'error');
+    } finally {
+        recipeSaving = false;
+        button.disabled = false;
+        button.textContent = editingRecipeId ? 'Salvar Alterações' : 'Salvar Receita';
+        rows.classList.remove('is-saving');
+    }
+}
+
+async function deleteRecipe(recipeId) {
+    const recipe = recipesList.find(entry => String(entry.id) === String(recipeId));
+    if (!recipe || !confirm(`Excluir a receita "${recipe.nome}"?`)) return;
+    if (!supabaseClient || !currentUser) {
+        showToast('Supabase não disponível.', 'error');
+        return;
+    }
+    try {
+        const { error } = await supabaseClient.from('receitas')
+            .delete()
+            .eq('id', recipe.id)
+            .eq('user_id', currentUser.id);
+        if (error) throw error;
+        recipesList = recipesList.filter(entry => String(entry.id) !== String(recipe.id));
+        renderRecipes();
+        renderItems();
+        showToast('Receita excluída.', 'success');
+    } catch (error) {
+        console.error('Erro ao excluir receita:', error);
+        showToast('Erro ao excluir receita: ' + (error && error.message ? error.message : error), 'error');
+    }
+}
+
+function openProductionModal(recipeId) {
+    updateProductionRecipeOptions(recipeId);
+    document.getElementById('production-quantity').value = '';
+    document.getElementById('production-note').value = '';
+    openModal('modal-producao');
+    updateProductionPreview();
+    if (recipesList.length === 0) showToast('Cadastre uma receita antes de registrar a produção.', 'info');
+}
+
+function getProductionStockIssues(recipe, quantity) {
+    return recipe.itens.reduce((issues, ingredient) => {
+        const item = itemsList.find(entry => String(entry.id) === String(ingredient.item_id));
+        const needed = (Number(ingredient.quantidade) / recipe.rendimento) * quantity;
+        if (!item) {
+            issues.push({ item: null, ingredient, needed, available: 0 });
+        } else if (item.status === 'CADASTRO PENDENTE' || Number(item.quantidade) + 1e-9 < needed) {
+            issues.push({ item, ingredient, needed, available: Number(item.quantidade) || 0 });
+        }
+        return issues;
+    }, []);
+}
+
+function updateProductionPreview() {
+    const preview = document.getElementById('production-preview');
+    const totalCost = document.getElementById('production-total-cost');
+    const unitCost = document.getElementById('production-unit-cost');
+    const ingredientList = document.getElementById('production-ingredient-list');
+    const warning = document.getElementById('production-stock-warning');
+    const button = document.getElementById('production-submit');
+    const recipeId = document.getElementById('production-recipe').value;
+    const quantity = Number(document.getElementById('production-quantity').value);
+    const recipe = recipesList.find(entry => String(entry.id) === String(recipeId));
+    
+    // A caixa de prévia agora SEMPRE fica visível desde que haja uma receita selecionada
+    if (!preview) return;
+    
+    if (!recipe) {
+        preview.classList.add('hidden');
+        warning.classList.add('hidden');
+        warning.textContent = '';
+        ingredientList.replaceChildren();
+        button.disabled = true;
+        return;
+    }
+
+    // Torna a caixa visível independentemente de ter quantidade ou não
+    preview.classList.remove('hidden');
+    warning.classList.add('hidden');
+    warning.textContent = '';
+    ingredientList.replaceChildren();
+
+    const validQuantity = Number.isSafeInteger(quantity) && quantity > 0 && quantity <= 2147483647;
+
+    if (!validQuantity) {
+        // Se a quantidade for inválida ou vazia, exibe "-" em tudo
+        if (totalCost) totalCost.textContent = '-';
+        if (unitCost) unitCost.textContent = '-';
+
+        recipe.itens.forEach(ingredient => {
+            const item = itemsList.find(entry => String(entry.id) === String(ingredient.item_id));
+            const row = document.createElement('li');
+            row.className = 'flex items-center justify-between gap-3 py-2 text-xs';
+            const name = document.createElement('span');
+            name.className = 'min-w-0 truncate font-medium text-slate-700';
+            name.textContent = item ? item.titulo : 'Insumo não encontrado';
+            const consumption = document.createElement('span');
+            consumption.className = 'shrink-0 font-semibold text-slate-400';
+            consumption.textContent = '-';
+            row.append(name, consumption);
+            ingredientList.appendChild(row);
+        });
+
+        button.disabled = true;
+        return;
+    }
+
+    let estimatedTotal = 0;
+    let hasMissingCost = false;
+    
+    recipe.itens.forEach(ingredient => {
+        const item = itemsList.find(entry => String(entry.id) === String(ingredient.item_id));
+        const needed = (Number(ingredient.quantidade) / recipe.rendimento) * quantity;
+        if (!item) {
+            hasMissingCost = true;
+        } else {
+            estimatedTotal += needed * (Number(item.custo_medio) || 0);
+        }
+
+        const row = document.createElement('li');
+        row.className = 'flex items-center justify-between gap-3 py-2 text-xs';
+        const name = document.createElement('span');
+        name.className = 'min-w-0 truncate font-medium text-slate-700';
+        name.textContent = item ? item.titulo : 'Insumo não encontrado';
+        const consumption = document.createElement('span');
+        consumption.className = 'shrink-0 font-semibold text-slate-600';
+        consumption.textContent = `−${needed.toLocaleString('pt-BR', { maximumFractionDigits: 3 })} ${item ? item.unidade || '' : ''}`;
+        row.append(name, consumption);
+        ingredientList.appendChild(row);
+    });
+
+    totalCost.textContent = hasMissingCost ? '-' : formatCurrency(estimatedTotal);
+    unitCost.textContent = hasMissingCost ? '-' : formatCurrency(estimatedTotal / quantity);
+
+    const issues = getProductionStockIssues(recipe, quantity);
+    if (issues.length) {
+        warning.textContent = issues.map(issue => {
+            const { item, needed, available } = issue;
+            if (!item) return `Insumo "${issue.ingredient.item_id}" não encontrado no estoque.`;
+            if (item.status === 'CADASTRO PENDENTE') {
+                return `${item.titulo}: cadastro pendente; regularize o insumo antes de produzir.`;
+            }
+            return `${item.titulo}: estoque insuficiente (disponível ${available.toLocaleString('pt-BR')} ${item.unidade || ''}; necessário ${needed.toLocaleString('pt-BR')} ${item.unidade || ''}).`;
+        }).join(' ');
+        warning.classList.remove('hidden');
+    }
+    button.disabled = productionSaving || issues.length > 0;
+}
+async function registerProduction() {
+    if (productionSaving) return;
+    if (!supabaseClient || !currentUser) {
+        showToast('Supabase não disponível.', 'error');
+        return;
+    }
+    const recipeId = document.getElementById('production-recipe').value;
+    const quantity = Number(document.getElementById('production-quantity').value);
+    const recipe = recipesList.find(entry => String(entry.id) === String(recipeId));
+    if (!recipe) {
+        showToast('Selecione uma receita válida.', 'error');
+        return;
+    }
+    if (!Number.isSafeInteger(quantity) || quantity <= 0 || quantity > 2147483647) {
+        showToast('Informe uma quantidade inteira de unidades maior que zero.', 'error');
+        return;
+    }
+    if (!recipe.itens.length) {
+        showToast(`A receita "${recipe.nome}" não possui insumos cadastrados.`, 'error');
+        return;
+    }
+
+    const stockIssues = getProductionStockIssues(recipe, quantity);
+    if (stockIssues.length) {
+        updateProductionPreview();
+        const issue = stockIssues[0];
+        if (!issue.item) {
+            showToast(`O insumo "${issue.ingredient.item_id}" da receita não está cadastrado no estoque.`, 'error');
+        } else if (issue.item.status === 'CADASTRO PENDENTE') {
+            showToast(`O insumo "${issue.item.titulo}" está com cadastro pendente.`, 'error');
+        } else {
+            showToast(`Estoque insuficiente para ${issue.item.titulo}: disponível ${issue.available.toLocaleString('pt-BR')} ${issue.item.unidade}, necessário ${issue.needed.toLocaleString('pt-BR')} ${issue.item.unidade}.`, 'error');
+        }
+        return;
+    }
+
+    productionSaving = true;
+    const button = document.getElementById('production-submit');
+    button.disabled = true;
+    button.textContent = 'Registrando...';
+    try {
+        const { error } = await supabaseClient.rpc('registrar_producao', {
+            p_user_id: currentUser.id,
+            p_receita_id: recipe.id,
+            p_quantidade: quantity,
+            p_observacao: document.getElementById('production-note').value.trim() || null
+        });
+        if (error) throw error;
+        closeModal('modal-producao');
+        document.getElementById('production-quantity').value = '';
+        await loadItems();
+        await loadHomeDashboard();
+        showToast(`Produção de ${quantity.toLocaleString('pt-BR')} unidades registrada com sucesso!`, 'success');
+    } catch (error) {
+        console.error('Erro ao registrar produção:', error);
+        showToast('Não foi possível registrar a produção: ' + (error && error.message ? error.message : error), 'error');
+    } finally {
+        productionSaving = false;
+        button.textContent = 'Confirmar Produção';
+        updateProductionPreview();
+    }
+}
+
 function normalizeItem(i) {
     const quantidade = Number(i.quantidade) || 0;
     return {
         ...i,
         quantidade,
         custo_medio: Number(i.custo_medio) || 0,
-        status: i.status || (quantidade > 0 ? 'COM MOVIMENTAÇÕES' : 'SEM MOVIMENTAÇÕES')
+        status: i.status === 'COM MOVIMENTAÇÕES' ? 'ATIVO NO ESTOQUE' : (i.status || (quantidade > 0 ? 'ATIVO NO ESTOQUE' : 'SEM MOVIMENTAÇÕES'))
     };
 }
 
@@ -584,12 +1669,13 @@ function updateModalStatsUI(item) {
     const qtd = Number(item.quantidade) || 0;
     const custo = Number(item.custo_medio) || 0;
     const unidade = item.unidade || '';
-    const status = item.status || (qtd > 0 ? 'COM MOVIMENTAÇÕES' : 'SEM MOVIMENTAÇÕES');
-    const semMov = status === 'SEM MOVIMENTAÇÕES' || qtd === 0;
+    const status = item.status || (qtd > 0 ? 'ATIVO NO ESTOQUE' : 'SEM MOVIMENTAÇÕES');
+    const pendente = status === 'CADASTRO PENDENTE';
+    const semMov = status === 'SEM MOVIMENTAÇÕES';
 
     setStatValue('modal-stock-balance', qtd.toLocaleString('pt-BR') + ' ' + unidade, '#1e293b');
     setStatValue('modal-avg-cost', formatUnitCost(custo) + (unidade ? ' / ' + unidade.toLowerCase() : ''), '#0369a1');
-    setStatValue('modal-status-badge', semMov ? 'SEM MOVIMENTAÇÕES' : 'ATIVO NO ESTOQUE', semMov ? '#b45309' : '#047857');
+    setStatValue('modal-status-badge', pendente ? 'CADASTRO PENDENTE' : semMov ? 'SEM MOVIMENTAÇÕES' : 'ATIVO NO ESTOQUE', pendente || semMov ? '#b45309' : '#047857');
 }
 
 function saveItemsLocalFallback() {
@@ -603,19 +1689,31 @@ function saveItemsLocalFallback() {
 function renderItems() {
     const tbody = document.getElementById('items-table-body');
     const emptyState = document.getElementById('empty-state');
-    const search = (document.getElementById('search-input').value || '').toLowerCase();
-    const filterUnit = document.getElementById('unit-filter').value;
+    if (!tbody || !emptyState) return;
+    const search = (document.getElementById('search-input')?.value || '').trim().toLocaleLowerCase('pt-BR');
+    const filterUnit = document.getElementById('unit-filter')?.value || 'ALL';
 
     const filtered = itemsList.filter(item => {
-        const matchesSearch = (item.titulo || '').toLowerCase().includes(search);
-        const matchesUnit = filterUnit === 'ALL' || item.unidade === filterUnit;
-        return matchesSearch && matchesUnit;
+        const searchableText = `${item.titulo || ''} ${item.codigo || ''}`.toLocaleLowerCase('pt-BR');
+        const matchesSearch = searchableText.includes(search);
+        const matchesUnit = filterUnit === 'ALL' || String(item.unidade || '').toUpperCase() === filterUnit;
+        const isFinishedProduct = isFinishedStockProduct(item);
+        const matchesType = currentStockTypeFilter === 'ALL' ||
+            (currentStockTypeFilter === 'FINISHED' && isFinishedProduct) ||
+            (currentStockTypeFilter === 'INGREDIENT' && !isFinishedProduct);
+        return matchesSearch && matchesUnit && matchesType;
     });
 
     tbody.innerHTML = '';
 
     if (filtered.length === 0) {
         emptyState.classList.remove('hidden');
+        const heading = emptyState.querySelector('h4');
+        const description = emptyState.querySelector('p');
+        if (heading) heading.textContent = itemsList.length ? 'Nenhum item corresponde aos filtros' : 'Nenhum item encontrado';
+        if (description) description.textContent = itemsList.length
+            ? 'Ajuste a pesquisa ou os filtros para ver outros itens.'
+            : 'Cadastre novos insumos para começar o controle de custos.';
         return;
     } else {
         emptyState.classList.add('hidden');
@@ -632,7 +1730,9 @@ function renderItems() {
         const unitLabel = item.unidade;
 
         let statusBadge = '';
-        if (item.status === 'SEM MOVIMENTAÇÕES' || item.quantidade == 0) {
+        if (item.status === 'CADASTRO PENDENTE') {
+            statusBadge = '<span class="px-2.5 py-1 bg-amber-50 text-amber-800 border border-amber-300 rounded-full text-[11px] font-semibold whitespace-nowrap">Cadastro Pendente</span>';
+        } else if (item.status === 'SEM MOVIMENTAÇÕES') {
             statusBadge = '<span class="px-2.5 py-1 bg-amber-50 text-amber-700 border border-amber-200 rounded-full text-[11px] font-medium whitespace-nowrap">Sem Movimentações</span>';
         } else {
             statusBadge = '<span class="px-2.5 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full text-[11px] font-medium whitespace-nowrap">Ativo no Estoque</span>';
@@ -658,6 +1758,38 @@ function renderItems() {
     });
 
     if (window.lucide) lucide.createIcons();
+}
+
+function isFinishedStockProduct(item) {
+    const itemName = normalizeName(item.titulo || item.nome || '');
+    return !!itemName && recipesList.some(recipe => normalizeName(recipe.nome) === itemName);
+}
+
+function setStockTypeFilter(type) {
+    const validTypes = ['ALL', 'INGREDIENT', 'FINISHED'];
+    currentStockTypeFilter = validTypes.includes(type) ? type : 'ALL';
+
+    const buttonIds = {
+        ALL: 'stock-type-all',
+        INGREDIENT: 'stock-type-ingredient',
+        FINISHED: 'stock-type-finished'
+    };
+    Object.entries(buttonIds).forEach(([filterType, buttonId]) => {
+        const button = document.getElementById(buttonId);
+        if (!button) return;
+        const isActive = filterType === currentStockTypeFilter;
+        button.classList.toggle('is-active', isActive);
+        button.classList.toggle('bg-brand-600', isActive);
+        button.classList.toggle('border-brand-600', isActive);
+        button.classList.toggle('text-white', isActive);
+        button.classList.toggle('bg-white', !isActive);
+        button.classList.toggle('border-slate-200', !isActive);
+        button.classList.toggle('text-slate-600', !isActive);
+        button.classList.toggle('hover:bg-slate-50', !isActive);
+        button.setAttribute('aria-pressed', String(isActive));
+    });
+
+    renderItems();
 }
 function closeModal(id) {
     const modal = document.getElementById(id);
@@ -773,7 +1905,7 @@ async function handleCreateItemSubmit(event) {
         initial_total = calcEntryTotal(qty, rawCost, unit, isUnitPrice);
         avg_unit_cost = qty > 0 ? initial_total / qty : 0;
         
-        status = 'COM MOVIMENTAÇÕES';
+        status = 'ATIVO NO ESTOQUE';
     }
 
     const newItem = {
@@ -1252,6 +2384,10 @@ document.addEventListener('scroll', (e) => {
     if (purchaseAc.el && e.target !== purchaseAc.el) hidePurchaseAutocomplete();
 }, true);
 window.addEventListener('resize', hidePurchaseAutocomplete);
+window.addEventListener('resize', hideRecipeAutocomplete);
+document.addEventListener('scroll', event => {
+    if (recipeAutocomplete.el && event.target !== recipeAutocomplete.el) hideRecipeAutocomplete();
+}, true);
 
 // ----- Validação -----
 function collectPurchaseEntries() {
@@ -1320,7 +2456,7 @@ async function savePurchaseEntry(entry, createdAt) {
         const upd = await supabaseClient.from('itens').update({
             quantidade: newStock,
             custo_medio: newAvg,
-            status: 'COM MOVIMENTAÇÕES'
+            status: 'ATIVO NO ESTOQUE'
         }).eq('id', existing.id);
         if (upd.error) throw upd.error;
 
@@ -1341,7 +2477,7 @@ async function savePurchaseEntry(entry, createdAt) {
 
         existing.quantidade = newStock;
         existing.custo_medio = newAvg;
-        existing.status = 'COM MOVIMENTAÇÕES';
+        existing.status = 'ATIVO NO ESTOQUE';
         return false;
     }
 
@@ -1354,7 +2490,7 @@ async function savePurchaseEntry(entry, createdAt) {
         unidade: entry.unit,
         quantidade: entry.qty,
         custo_medio: unitCost,
-        status: 'COM MOVIMENTAÇÕES'
+        status: 'ATIVO NO ESTOQUE'
     }]).select().single();
     if (ins.error) throw ins.error;
     const created = ins.data;
@@ -1562,6 +2698,11 @@ async function registerMovement() {
 
     const type = document.getElementById('mov-type').value === 'IN' ? 'ENTRADA' : 'SAIDA';
     const qty = parseQuantityInput(document.getElementById('mov-qty').value);
+    const previousState = {
+        quantidade: Number(item.quantidade) || 0,
+        custo_medio: Number(item.custo_medio) || 0,
+        status: item.status
+    };
     let totalCost = 0;
     if (type === 'ENTRADA') {
         const rawValue = parseCurrencyInput(document.getElementById('mov-total-price').value);
@@ -1612,18 +2753,15 @@ async function registerMovement() {
         const newAvg = newStock > 0 ? ((oldStock * oldCost) + (qty * unitCost)) / newStock : unitCost;
         item.quantidade = newStock;
         item.custo_medio = newAvg;
-        item.status = 'COM MOVIMENTAÇÕES';
+        item.status = 'ATIVO NO ESTOQUE';
     } else {
         item.quantidade = (item.quantidade || 0) - qty;
-        if (item.quantidade <= 0) {
-            item.quantidade = 0;
-            item.status = 'SEM MOVIMENTAÇÕES';
-        }
+        if (item.quantidade <= 0) item.quantidade = 0;
     }
 
     if (supabaseClient && !currentUser.id.startsWith('offline-') && !String(item.id).startsWith('local-')) {
         try {
-            await supabaseClient.from('historico').insert([{
+            const { data: historyRow, error: historyError } = await supabaseClient.from('historico').insert([{
                 item_id: item.id,
                 user_id: currentUser.id,
                 tipo: type,
@@ -1631,13 +2769,30 @@ async function registerMovement() {
                 valor_total: Number(movement.valor_total) || 0,
                 custo_unitario: Number(unitCost) || 0,
                 created_at: movementDateIso
-            }]);
-            await supabaseClient.from('itens').update({
+            }]).select('id').single();
+            if (historyError) throw historyError;
+
+            const { error: updateError } = await supabaseClient.from('itens').update({
                 quantidade: Number(item.quantidade) || 0,
                 custo_medio: Number(item.custo_medio) || 0,
                 status: item.status
             }).eq('id', item.id);
-        } catch (e) { console.error(e); }
+            if (updateError) {
+                const { error: rollbackError } = await supabaseClient.from('historico').delete()
+                    .eq('id', historyRow.id)
+                    .eq('user_id', currentUser.id);
+                if (rollbackError) console.error('Erro ao desfazer histórico da movimentação:', rollbackError);
+                throw updateError;
+            }
+        } catch (e) {
+            console.error('Erro ao registrar movimentação:', e);
+            item.quantidade = previousState.quantidade;
+            item.custo_medio = previousState.custo_medio;
+            item.status = previousState.status;
+            await loadItems();
+            showToast('Erro ao registrar movimentação: ' + (e && e.message ? e.message : e), 'error');
+            return;
+        }
     } else {
         const stored = localStorage.getItem('movements_' + item.id);
         const list = stored ? JSON.parse(stored) : [];
@@ -1734,7 +2889,7 @@ function updateStats() {
     if (totalItemsEl) totalItemsEl.textContent = itemsList.length;
     const active = itemsList.filter(i => i.quantidade > 0).length;
     if (activeItemsEl) activeItemsEl.textContent = active;
-    const empty = itemsList.filter(i => i.status === 'SEM MOVIMENTAÇÕES' || i.quantidade == 0).length;
+    const empty = itemsList.filter(i => i.status === 'SEM MOVIMENTAÇÕES' || i.status === 'CADASTRO PENDENTE' || i.quantidade == 0).length;
     if (emptyItemsEl) emptyItemsEl.textContent = empty;
     const totalVal = itemsList.reduce((acc, curr) => acc + ((curr.quantidade || 0) * (curr.custo_medio || 0)), 0);
     if (totalValueEl) totalValueEl.textContent = formatCurrency(totalVal);
@@ -2299,3 +3454,10 @@ if (document.readyState === 'loading') {
     setChartTab('preco');
 }
 
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => {
+        if (window.lucide) window.lucide.createIcons();
+    }, { once: true });
+} else if (window.lucide) {
+    window.lucide.createIcons();
+}
