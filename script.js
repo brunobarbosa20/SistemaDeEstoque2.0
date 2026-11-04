@@ -2280,8 +2280,6 @@ function openLossModal(orderId) {
     openModal('modal-op-perda');
 }
 
-// Substitua a função openCloseModal antiga por esta:
-// Substitua a função openCloseModal antiga por esta:
 async function openCloseModal(orderId) {
     const targetId = orderId || currentDetailOrderId;
     updateProductionOrderOptions();
@@ -2297,15 +2295,17 @@ async function openCloseModal(orderId) {
     const recipe = recipesList.find(r => String(r.id) === String(order.receita_id));
     const name = recipe ? recipe.nome : 'Produto Acabado';
 
-    // Preencher informações visuais do card de resumo
-    document.getElementById('close-preview-name').textContent = `${name} (Planejado: ${Number(order.quantidade_planejada).toLocaleString('pt-BR')} UN)`;
-    document.getElementById('close-preview-cost').textContent = formatCurrency(order.custo_acumulado);
+    // 1. Preencher informações visuais da receita travada no modal (corrigido numa única linha)
+    const inputName = document.getElementById('close-order-name-display');
+    if (inputName) {
+        inputName.value = `${name} - ${Number(order.quantidade_planejada).toLocaleString('pt-BR')} UN`;
+    }
 
-    // Sugerir rendimento real padrão igual ao planejado
+    // 2. Sugerir rendimento real padrão igual ao planejado
     const yieldInput = document.getElementById('close-yield');
     if (yieldInput) yieldInput.value = order.quantidade_planejada || '';
 
-    // Somar automaticamente as perdas registradas no histórico/tabela de perdas deste lote
+    // 3. Somar automaticamente as perdas registradas no histórico deste lote
     let totalLossCost = 0;
     if (supabaseClient && currentUser) {
         try {
@@ -2323,19 +2323,18 @@ async function openCloseModal(orderId) {
         }
     }
 
-    // Preencher o campo de perdas finais automaticamente com o somatório
+    // 4. Preencher o campo de perdas finais automaticamente
     const finalLossInput = document.getElementById('close-final-loss');
     if (finalLossInput) {
-        finalLossInput.value = formatCurrency(totalLossCost);
+        finalLossInput.value = totalLossCost > 0 ? totalLossCost.toFixed(2) : '0';
     }
 
-    document.getElementById('close-note').value = '';
+    // 5. Limpar observações e abrir o modal
+    const noteInput = document.getElementById('close-note');
+    if (noteInput) noteInput.value = '';
+
     openModal('modal-op-encerrar');
     if (window.lucide) lucide.createIcons();
-}
-
-async function cancelProductionOrderById(orderId) {
-    await cancelProductionOrder(orderId);
 }
 
 function normalizeItem(i) {
