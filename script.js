@@ -246,15 +246,21 @@ function showSection(section) {
     const estoque = document.getElementById('sec-estoque');
     const receitas = document.getElementById('sec-receitas');
     const relatorio = document.getElementById('sec-relatorio');
+    const ordensProducao = document.getElementById('sec-ordens-producao');
 
-    [home, estoque, receitas, relatorio].forEach(sec => {
+    [home, estoque, receitas, relatorio, ordensProducao].forEach(sec => {
         if (sec) {
             sec.classList.remove('active');
             sec.style.display = 'none';
         }
     });
 
-    const show = section === 'home' ? home : section === 'relatorio' ? relatorio : section === 'receitas' ? receitas : estoque;
+    const show = section === 'home' ? home
+        : section === 'relatorio' ? relatorio
+        : section === 'receitas' ? receitas
+        : section === 'ordens-producao' ? ordensProducao
+        : estoque;
+
     if (show) {
         show.style.display = 'block';
         void show.offsetWidth;
@@ -267,8 +273,12 @@ function showSection(section) {
         loadHomeDashboard();
     } else if (section === 'relatorio') {
         loadRelatorio();
+    } else if (section === 'ordens-producao') {
+        loadOrdensProducaoView();
     } else if (section === 'receitas') {
         renderRecipes();
+        renderProductionOrders();
+        updateProductionRecipeOptions();
     } else {
         renderItems();
     }
@@ -291,6 +301,8 @@ let recipesList = [];
 let editingRecipeId = null;
 let recipeSaving = false;
 let productionSaving = false;
+let productionOrdersList = [];
+let productionOrdersLoading = false;
 const recipeIngredientCreations = new Map();
 const recipeAutocomplete = { el: null, input: null, active: -1 };
 
@@ -536,6 +548,7 @@ async function renderDashboard() {
         showToast('Erro ao carregar itens: ' + (e && e.message ? e.message : e), 'error');
     }
     await loadRecipes();
+    await loadProductionOrders();
     await loadHomeDashboard();
     showSection('home');
     await checkDisplayName();
@@ -619,6 +632,105 @@ async function loadRecipes() {
     }
 }
 
+function renderProductionOrders() {
+    const tbody = document.getElementById('ordens-producao-table-body');
+    const empty = document.getElementById('ordens-producao-empty');
+    const cardAndamento = document.getElementById('op-card-andamento');
+    const cardConcluidas = document.getElementById('op-card-concluidas');
+    if (tbody) tbody.innerHTML = '';
+
+    const openOrders = productionOrdersList.filter(o => String(o.status) === 'EM_ANDAMENTO');
+    const doneOrders = productionOrdersList.filter(o => String(o.status) === 'CONCLUIDA');
+    if (cardAndamento) cardAndamento.textContent = openOrders.length;
+    if (cardConcluidas) cardConcluidas.textContent = doneOrders.length;
+
+    if (!productionOrdersList.length) {
+        if (empty) empty.classList.remove('hidden');
+        return;
+    }
+    if (empty) empty.classList.add('hidden');
+
+    productionOrdersList.forEach(order => {
+        if (!tbody) return;
+        const recipe = recipesList.find(r => String(r.id) === String(order.receita_id));
+        const name = recipe ? recipe.nome : 'Receita';
+        const tr = document.createElement('tr');
+        tr.className = 'hover:bg-slate-50/80';
+        const statusClass = String(order.status) === 'EM_ANDAMENTO'
+            ? 'bg-amber-50 text-amber-700 border-amber-200'
+            : String(order.status) === 'CONCLUIDA'
+                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                : 'bg-slate-100 text-slate-600 border-slate-200';
+        const actions = String(order.status) === 'EM_ANDAMENTO'
+            ? `<button type="button" onclick="openLossModal('${order.id}')" class="px-2 py-1 text-xs font-semibold text-amber-700 hover:bg-amber-50 rounded">Perda</button>
+               <button type="button" onclick="openCloseModal('${order.id}')" class="px-2 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 rounded">Encerrar</button>
+               <button type="button" onclick="cancelProductionOrderById('${order.id}')" class="px-2 py-1 text-xs font-semibold text-rose-600 hover:bg-rose-50 rounded">Cancelar</button>`
+            : '';
+        tr.innerHTML = `
+            <td class="px-3 sm:px-6 py-3 font-mono text-xs">${String(order.id).slice(0,8)}</td>
+            <td class="px-3 sm:px-6 py-3 font-semibold text-slate-900">${escapeHtml(name)}</td>
+            <td class="px-3 sm:px-6 py-3 text-right">${Number(order.quantidade_planejada).toLocaleString('pt-BR')}</td>
+            <td class="px-3 sm:px-6 py-3 text-right">${formatCurrency(order.custo_acumulado)}</td>
+            <td class="px-3 sm:px-6 py-3"><span class="px-2 py-0.5 border rounded text-[11px] font-semibold ${statusClass}">${order.status}</span></td>
+            <td class="px-3 sm:px-6 py-3 text-right space-x-1">${actions}</td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
+
+async function loadOrdensProducaoView() {
+    await loadProductionOrders();
+    renderProductionOrders();
+}
+
+async function loadProductionOrders() {
+    productionOrdersList = [];
+    if (!supabaseClient || !currentUser) {
+        renderProductionOrders();
+        updateProductionOrderOptions();
+        return;
+    }
+    try {
+        const { data: orders, error: orderError } = await supabaseClient
+            .from('ordens_producao')
+            .select('*')
+            .eq('user_id', currentUser.id)
+            .order('created_at', { ascending: false });
+        if (orderError) throw orderError;
+        const orderIds = (orders || []).map(o => o.id);
+        let orderItems = [];
+        if (orderIds.length > 0) {
+            const { data, error } = await supabaseClient
+                .from('ordem_itens')
+                .select('*')
+                .eq('user_id', currentUser.id)
+                .in('ordem_id', orderIds);
+            if (error) throw error;
+            orderItems = data || [];
+        }
+        productionOrdersList = (orders || []).map(order => ({
+            ...order,
+            quantidade_planejada: Number(order.quantidade_planejada) || 0,
+            custo_acumulado: Number(order.custo_acumulado) || 0,
+            rendimento_real: order.rendimento_real == null ? null : Number(order.rendimento_real),
+            perdas_finais: Number(order.perdas_finais) || 0,
+            itens: orderItems
+                .filter(oi => String(oi.ordem_id) === String(order.id))
+                .map(oi => ({
+                    ...oi,
+                    quantidade_reservada: Number(oi.quantidade_reservada) || 0,
+                    quantidade_perdida: Number(oi.quantidade_perdida) || 0,
+                    custo_unitario: Number(oi.custo_unitario) || 0
+                }))
+        }));
+    } catch (error) {
+        console.error('Erro ao carregar ordens de produção:', error);
+        productionOrdersList = [];
+        showToast('Aplique supabase_data/08_ordens_producao.sql no Supabase para usar Ordens de Produção: ' + (error && error.message ? error.message : error), 'error');
+    }
+    renderProductionOrders();
+    updateProductionOrderOptions();
+}
 function renderRecipes() {
     const tbody = document.getElementById('recipes-table-body');
     const empty = document.getElementById('recipes-empty-state');
@@ -1463,7 +1575,68 @@ async function deleteRecipe(recipeId) {
     }
 }
 
+function updateProductionOrderOptions() {
+    const openOrders = productionOrdersList.filter(o => String(o.status) === 'EM_ANDAMENTO');
+    const lossSelect = document.getElementById('loss-order');
+    const closeSelect = document.getElementById('close-order');
+    [lossSelect, closeSelect].forEach(select => {
+        if (!select) return;
+        const current = select.value;
+        select.innerHTML = '<option value="">Selecione a ordem...</option>';
+        openOrders.forEach(order => {
+            const recipe = recipesList.find(r => String(r.id) === String(order.receita_id));
+            const name = recipe ? recipe.nome : 'Receita';
+            const opt = document.createElement('option');
+            opt.value = order.id;
+            opt.textContent = `${name} · ${Number(order.quantidade_planejada).toLocaleString('pt-BR')} UN`;
+            select.appendChild(opt);
+        });
+        if (current) select.value = current;
+    });
+    updateLossOrderPreview();
+}
+
+function updateLossOrderPreview() {
+    const orderId = document.getElementById('loss-order') ? document.getElementById('loss-order').value : '';
+    const itemSelect = document.getElementById('loss-item');
+    if (!itemSelect) return;
+    
+    itemSelect.innerHTML = '<option value="">Selecione o insumo...</option>';
+    const order = productionOrdersList.find(o => String(o.id) === String(orderId));
+    if (!order) return;
+    order.itens.forEach(oi => {
+        const item = itemsList.find(i => String(i.id) === String(oi.item_id));
+        const reservedRemaining = Math.max(0, (Number(oi.quantidade_reservada) || 0) - (Number(oi.quantidade_perdida) || 0));
+        const opt = document.createElement('option');
+        opt.value = oi.item_id;
+        opt.textContent = `${item ? item.titulo : oi.item_id} (reservado: ${reservedRemaining.toLocaleString('pt-BR')})`;
+        itemSelect.appendChild(opt);
+    });
+}
+
+function updateLossCostPreview() {
+    const preview = document.getElementById('loss-cost-preview');
+    const estimate = document.getElementById('loss-cost-estimate');
+    if (!preview || !estimate) return;
+
+    const orderId = document.getElementById('loss-order')?.value || '';
+    const itemId = document.getElementById('loss-item')?.value || '';
+    const quantity = Number(document.getElementById('loss-quantity')?.value);
+    const order = productionOrdersList.find(o => String(o.id) === String(orderId));
+    const orderItem = order?.itens.find(oi => String(oi.item_id) === String(itemId));
+
+    if (!orderItem || !Number.isFinite(quantity) || quantity <= 0) {
+        preview.classList.add('hidden');
+        return;
+    }
+
+    const unitCost = Number(orderItem.custo_unitario) || 0;
+    estimate.textContent = `${formatCurrency(quantity * unitCost)} (${formatUnitCost(unitCost)} × ${quantity.toLocaleString('pt-BR')})`;
+    preview.classList.remove('hidden');
+}
+
 function openProductionModal(recipeId) {
+    loadProductionOrders();
     updateProductionRecipeOptions(recipeId);
     document.getElementById('production-quantity').value = '';
     document.getElementById('production-note').value = '';
@@ -1472,14 +1645,30 @@ function openProductionModal(recipeId) {
     if (recipesList.length === 0) showToast('Cadastre uma receita antes de registrar a produção.', 'info');
 }
 
+function getReservedQuantity(itemId, excludeOrderId) {
+    let reserved = 0;
+    (productionOrdersList || []).forEach(order => {
+        if (String(order.status) !== 'EM_ANDAMENTO') return;
+        if (excludeOrderId && String(order.id) === String(excludeOrderId)) return;
+        (order.itens || []).forEach(oi => {
+            if (String(oi.item_id) !== String(itemId)) return;
+            const r = Number(oi.quantidade_reservada) || 0;
+            const l = Number(oi.quantidade_perdida) || 0;
+            reserved += Math.max(0, r - l);
+        });
+    });
+    return reserved;
+}
+
 function getProductionStockIssues(recipe, quantity) {
     return recipe.itens.reduce((issues, ingredient) => {
         const item = itemsList.find(entry => String(entry.id) === String(ingredient.item_id));
         const needed = (Number(ingredient.quantidade) / recipe.rendimento) * quantity;
+        const available = item ? Math.max(0, (Number(item.quantidade) || 0) - getReservedQuantity(ingredient.item_id)) : 0;
         if (!item) {
             issues.push({ item: null, ingredient, needed, available: 0 });
-        } else if (item.status === 'CADASTRO PENDENTE' || Number(item.quantidade) + 1e-9 < needed) {
-            issues.push({ item, ingredient, needed, available: Number(item.quantidade) || 0 });
+        } else if (item.status === 'CADASTRO PENDENTE' || available + 1e-9 < needed) {
+            issues.push({ item, ingredient, needed, available });
         }
         return issues;
     }, []);
@@ -1621,26 +1810,336 @@ async function registerProduction() {
     button.disabled = true;
     button.textContent = 'Registrando...';
     try {
-        const { error } = await supabaseClient.rpc('registrar_producao', {
-            p_user_id: currentUser.id,
-            p_receita_id: recipe.id,
-            p_quantidade: quantity,
-            p_observacao: document.getElementById('production-note').value.trim() || null
+        const orderPayload = {
+            user_id: currentUser.id,
+            receita_id: recipe.id,
+            quantidade_planejada: quantity,
+            status: 'EM_ANDAMENTO',
+            custo_acumulado: 0,
+            observacao: document.getElementById('production-note').value.trim() || null
+        };
+        const { data: order, error: orderError } = await supabaseClient
+            .from('ordens_producao')
+            .insert(orderPayload)
+            .select()
+            .single();
+        if (orderError) throw orderError;
+
+        const orderItemsPayload = recipe.itens.map(ingredient => {
+            const needed = (Number(ingredient.quantidade) / recipe.rendimento) * quantity;
+            const item = itemsList.find(i => String(i.id) === String(ingredient.item_id));
+            return {
+                ordem_id: order.id,
+                user_id: currentUser.id,
+                item_id: ingredient.item_id,
+                quantidade_reservada: needed,
+                quantidade_perdida: 0,
+                custo_unitario: item ? (Number(item.custo_medio) || 0) : 0
+            };
         });
-        if (error) throw error;
+        const { error: itemsError } = await supabaseClient
+            .from('ordem_itens')
+            .insert(orderItemsPayload);
+        if (itemsError) throw itemsError;
+
         closeModal('modal-producao');
         document.getElementById('production-quantity').value = '';
+        document.getElementById('production-note').value = '';
+        await loadProductionOrders();
+        renderProductionOrders();
         await loadItems();
         await loadHomeDashboard();
-        showToast(`Produção de ${quantity.toLocaleString('pt-BR')} unidades registrada com sucesso!`, 'success');
+        if (document.getElementById('sec-ordens-producao') && document.getElementById('sec-ordens-producao').style.display === 'block') {
+            loadOrdensProducaoView();
+        }
+        showToast(`Ordem de produção iniciada: ${quantity.toLocaleString('pt-BR')} unidades. Insumos reservados.`, 'success');
     } catch (error) {
-        console.error('Erro ao registrar produção:', error);
-        showToast('Não foi possível registrar a produção: ' + (error && error.message ? error.message : error), 'error');
+        console.error('Erro ao iniciar ordem de produção:', error);
+        showToast('Não foi possível iniciar a ordem: ' + (error && error.message ? error.message : error), 'error');
     } finally {
         productionSaving = false;
-        button.textContent = 'Confirmar Produção';
+        button.disabled = false;
+        button.textContent = 'Iniciar Ordem';
         updateProductionPreview();
     }
+}
+
+async function registerLoss() {
+    if (!supabaseClient || !currentUser) {
+        showToast('Supabase não disponível.', 'error');
+        return;
+        
+    }
+
+    const orderId = document.getElementById('loss-order') ? document.getElementById('loss-order').value : '';
+    const itemId = document.getElementById('loss-item') ? document.getElementById('loss-item').value : '';
+    const qty = Number(document.getElementById('loss-quantity').value) || 0;
+    const description = (document.getElementById('loss-description').value || '').trim();
+    const order = productionOrdersList.find(o => String(o.id) === String(orderId));
+    if (!order) {
+        showToast('Selecione a ordem de produção.', 'error');
+        return;
+    }
+    const orderItem = order.itens.find(oi => String(oi.item_id) === String(itemId));
+    if (qty <= 0) {
+        showToast('Informe a quantidade perdida ou o custo adicional.', 'error');
+        return;
+    }
+
+    if (qty <= 0) {
+        showToast('Informe uma quantidade perdida maior que zero.', 'error');
+        return;
+    }
+    
+    if (qty > 0 && (!orderItem || qty > (orderItem.quantidade_reservada - orderItem.quantidade_perdida) + 1e-9)) {
+        showToast('Quantidade perdida maior que o reservado.', 'error');
+        return;
+    }
+
+    try {
+        const item = itemsList.find(i => String(i.id) === String(itemId));
+        const unitCost = orderItem ? (Number(orderItem.custo_unitario) || 0) : 0;
+
+        if (qty > 0 && item) {
+            const { error: itemError } = await supabaseClient
+                .from('itens')
+                .update({ quantidade: Math.max(0, (Number(item.quantidade) || 0) - qty) })
+                .eq('id', item.id)
+                .eq('user_id', currentUser.id);
+            if (itemError) throw itemError;
+
+            const { error: histError } = await supabaseClient
+                .from('historico')
+                .insert([{
+                    item_id: item.id,
+                    user_id: currentUser.id,
+                    tipo: 'SAIDA',
+                    quantidade: qty,
+                    valor_total: qty * unitCost,
+                    custo_unitario: unitCost,
+                    observacao: `Perda O.P. ${String(order.id).slice(0,8)}: ${description || 'ocorrência'}`
+                }]);
+            if (histError) throw histError;
+
+            const newLost = (Number(orderItem.quantidade_perdida) || 0) + qty;
+            const { error: oiError } = await supabaseClient
+                .from('ordem_itens')
+                .update({ quantidade_perdida: newLost })
+                .eq('ordem_id', order.id)
+                .eq('item_id', itemId)
+                .eq('user_id', currentUser.id);
+            if (oiError) throw oiError;
+        }
+
+        const finalCusto = (Number(order.custo_acumulado) || 0) + (qty * unitCost);
+
+        const { error: orderError } = await supabaseClient
+            .from('ordens_producao')
+            .update({ custo_acumulado: finalCusto })
+            .eq('id', order.id)
+            .eq('user_id', currentUser.id);
+        if (orderError) throw orderError;
+
+        const { error: perdaError } = await supabaseClient
+            .from('ordem_perdas')
+            .insert([{
+                ordem_id: order.id,
+                user_id: currentUser.id,
+                item_id: itemId || null,
+                quantidade: qty,
+                custo: qty * unitCost,
+                descricao: description || null
+            }]);
+        if (perdaError) throw perdaError;
+
+        document.getElementById('loss-quantity').value = '';
+        document.getElementById('loss-cost').value = '';
+        document.getElementById('loss-description').value = '';
+        await loadProductionOrders();
+        await loadItems();
+        await loadHomeDashboard();
+        showToast('Perda registrada. Estoque físico atualizado.', 'success');
+    } catch (error) {
+        console.error('Erro ao registrar perda:', error);
+        showToast('Não foi possível registrar a perda: ' + (error && error.message ? error.message : error), 'error');
+    }
+}
+
+async function closeProductionOrder() {
+    if (!supabaseClient || !currentUser) {
+        showToast('Supabase não disponível.', 'error');
+        return;
+    }
+    const orderId = document.getElementById('close-order') ? document.getElementById('close-order').value : '';
+    const yieldQty = Number(document.getElementById('close-yield').value) || 0;
+    const finalLossCost = Number(document.getElementById('close-final-loss').value) || 0;
+    const note = (document.getElementById('close-note').value || '').trim();
+    const order = productionOrdersList.find(o => String(o.id) === String(orderId));
+    if (!order) {
+        showToast('Selecione a ordem de produção.', 'error');
+        return;
+    }
+    if (yieldQty <= 0) {
+        showToast('Informe o rendimento real obtido.', 'error');
+        return;
+    }
+    try {
+        const recipe = recipesList.find(r => String(r.id) === String(order.receita_id));
+        let accumulatedCost = Number(order.custo_acumulado) || 0;
+        for (const oi of order.itens) {
+            const remaining = Math.max(0, (Number(oi.quantidade_reservada) || 0) - (Number(oi.quantidade_perdida) || 0));
+            if (remaining <= 0) continue;
+            const item = itemsList.find(i => String(i.id) === String(oi.item_id));
+            if (item) {
+                const { error: itemError } = await supabaseClient
+                    .from('itens')
+                    .update({ quantidade: Math.max(0, (Number(item.quantidade) || 0) - remaining) })
+                    .eq('id', item.id)
+                    .eq('user_id', currentUser.id);
+                if (itemError) throw itemError;
+                const unitCost = Number(oi.custo_unitario) || 0;
+                const { error: histError } = await supabaseClient
+                    .from('historico')
+                    .insert([{
+                        item_id: item.id,
+                        user_id: currentUser.id,
+                        tipo: 'SAIDA',
+                        quantidade: remaining,
+                        valor_total: remaining * unitCost,
+                        custo_unitario: unitCost,
+                        observacao: `Encerramento O.P. ${String(order.id).slice(0,8)}${note ? ' · ' + note : ''}`
+                    }]);
+                if (histError) throw histError;
+            }
+            accumulatedCost += remaining * (Number(oi.custo_unitario) || 0);
+        }
+        accumulatedCost += finalLossCost;
+
+        const unitCostPa = accumulatedCost / yieldQty;
+        const paName = recipe ? recipe.nome : 'Produto Acabado';
+        let paItem = itemsList.find(i => String(i.titulo || '').trim().toLowerCase() === String(paName).trim().toLowerCase());
+        if (paItem) {
+            const oldQty = Number(paItem.quantidade) || 0;
+            const oldCost = Number(paItem.custo_medio) || 0;
+            const newQty = oldQty + yieldQty;
+            const newAvg = newQty > 0 ? ((oldQty * oldCost) + (yieldQty * unitCostPa)) / newQty : unitCostPa;
+            const { error: paError } = await supabaseClient
+                .from('itens')
+                .update({ quantidade: newQty, custo_medio: newAvg, status: 'ATIVO NO ESTOQUE' })
+                .eq('id', paItem.id)
+                .eq('user_id', currentUser.id);
+            if (paError) throw paError;
+            paItem.quantidade = newQty;
+            paItem.custo_medio = newAvg;
+        } else {
+            const { data: created, error: createError } = await supabaseClient
+                .from('itens')
+                .insert([{
+                    id: generateId(),
+                    codigo: generateItemCode(),
+                    user_id: currentUser.id,
+                    titulo: paName,
+                    unidade: 'UN',
+                    quantidade: yieldQty,
+                    custo_medio: unitCostPa,
+                    status: 'ATIVO NO ESTOQUE'
+                }])
+                .select()
+                .single();
+            if (createError) throw createError;
+            paItem = created;
+            itemsList.unshift(normalizeItem(created));
+        }
+        const { error: entryHistError } = await supabaseClient
+            .from('historico')
+            .insert([{
+                item_id: paItem.id,
+                user_id: currentUser.id,
+                tipo: 'ENTRADA',
+                quantidade: yieldQty,
+                valor_total: yieldQty * unitCostPa,
+                custo_unitario: unitCostPa,
+                observacao: `Produção concluída: O.P. ${String(order.id).slice(0,8)}${note ? ' · ' + note : ''}`
+            }]);
+        if (entryHistError) throw entryHistError;
+
+        const { error: closeError } = await supabaseClient
+            .from('ordens_producao')
+            .update({
+                status: 'CONCLUIDA',
+                custo_acumulado: accumulatedCost,
+                rendimento_real: yieldQty,
+                perdas_finais: finalLossCost,
+                observacao: note || order.observacao,
+                encerrada_at: new Date().toISOString()
+            })
+            .eq('id', order.id)
+            .eq('user_id', currentUser.id);
+        if (closeError) throw closeError;
+
+        document.getElementById('close-yield').value = '';
+        document.getElementById('close-final-loss').value = '';
+        document.getElementById('close-note').value = '';
+        await loadProductionOrders();
+        await loadItems();
+        await loadHomeDashboard();
+        showToast(`Ordem encerrada. ${yieldQty.toLocaleString('pt-BR')} UN de ${paName} gerado.`, 'success');
+    } catch (error) {
+        console.error('Erro ao encerrar ordem:', error);
+        showToast('Não foi possível encerrar a ordem: ' + (error && error.message ? error.message : error), 'error');
+    }
+}
+
+async function cancelProductionOrder(orderIdParam) {
+    if (!supabaseClient || !currentUser) {
+        showToast('Supabase não disponível.', 'error');
+        return;
+    }
+    const orderId = orderIdParam || (document.getElementById('close-order') ? document.getElementById('close-order').value : '');
+    const order = productionOrdersList.find(o => String(o.id) === String(orderId));
+    if (!order) {
+        showToast('Selecione a ordem de produção.', 'error');
+        return;
+    }
+    if (!confirm('Cancelar esta ordem e liberar os insumos reservados?')) return;
+    try {
+        const { error } = await supabaseClient
+            .from('ordens_producao')
+            .update({ status: 'CANCELADA', encerrada_at: new Date().toISOString() })
+            .eq('id', order.id)
+            .eq('user_id', currentUser.id);
+        if (error) throw error;
+        await loadProductionOrders();
+        await loadItems();
+        await loadHomeDashboard();
+        showToast('Ordem cancelada. Insumos reservados liberados.', 'success');
+    } catch (error) {
+        console.error('Erro ao cancelar ordem:', error);
+        showToast('Não foi possível cancelar a ordem: ' + (error && error.message ? error.message : error), 'error');
+    }
+}
+
+function updateCloseOrderPreview() {
+    // placeholder
+}
+
+function openLossModal(orderId) {
+    updateProductionOrderOptions();
+    const select = document.getElementById('loss-order');
+    if (select && orderId) select.value = orderId;
+    updateLossOrderPreview();
+    openModal('modal-op-perda');
+}
+
+function openCloseModal(orderId) {
+    updateProductionOrderOptions();
+    const select = document.getElementById('close-order');
+    if (select && orderId) select.value = orderId;
+    openModal('modal-op-encerrar');
+}
+
+async function cancelProductionOrderById(orderId) {
+    await cancelProductionOrder(orderId);
 }
 
 function normalizeItem(i) {

@@ -201,6 +201,9 @@
                     <button onclick="showSection('estoque')" class="w-full text-left px-4 py-2.5 rounded-lg hover:bg-slate-800 transition-all flex items-center gap-2">
                         <i data-lucide="package" class="w-4 h-4"></i> Estoque
                     </button>
+                    <button onclick="showSection('ordens-producao')" class="w-full text-left px-4 py-2.5 rounded-lg hover:bg-slate-800 transition-all flex items-center gap-2">
+                        <i data-lucide="factory" class="w-4 h-4"></i> Ordens de Produção
+                    </button>
                     <button onclick="showSection('receitas')" class="w-full text-left px-4 py-2.5 rounded-lg hover:bg-slate-800 transition-all flex items-center gap-2">
                         <i data-lucide="chef-hat" class="w-4 h-4"></i> Receitas / Produção
                     </button>
@@ -406,6 +409,52 @@
                         </div>
                     </div>
                 </section>
+                <section id="sec-ordens-producao" class="section-content space-y-6">
+                    <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
+                        <div>
+                            <h2 class="text-lg font-bold text-slate-900">Ordens de Produção (O.P.)</h2>
+                            <p class="text-xs text-slate-500 mt-1">Gerencie lotes em andamento, registre perdas e encerre ordens.</p>
+                        </div>
+                        <button onclick="openProductionModal()" class="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm rounded-lg flex items-center justify-center gap-2">
+                            <i data-lucide="plus" class="w-4 h-4"></i> Nova Ordem de Produção
+                        </button>
+                    </div>
+
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+                            <p class="text-xs font-medium text-slate-500">Ordens em Andamento</p>
+                            <p id="op-card-andamento" class="mt-1 text-2xl font-bold text-amber-600">0</p>
+                        </div>
+                        <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+                            <p class="text-xs font-medium text-slate-500">Ordens Concluídas</p>
+                            <p id="op-card-concluidas" class="mt-1 text-2xl font-bold text-emerald-600">0</p>
+                        </div>
+                    </div>
+
+                    <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                        <div class="overflow-x-auto">
+                            <table class="min-w-full text-sm">
+                                <thead class="bg-slate-50 text-xs text-slate-600">
+                                    <tr>
+                                        <th class="px-3 sm:px-6 py-3 text-left">O.P.</th>
+                                        <th class="px-3 sm:px-6 py-3 text-left">Receita / P.A.</th>
+                                        <th class="px-3 sm:px-6 py-3 text-right">Planejado</th>
+                                        <th class="px-3 sm:px-6 py-3 text-right">Custo Acumulado</th>
+                                        <th class="px-3 sm:px-6 py-3 text-left">Status</th>
+                                        <th class="px-3 sm:px-6 py-3 text-right">Ações</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="ordens-producao-table-body" class="divide-y divide-slate-100"></tbody>
+                            </table>
+                        </div>
+                        <div id="ordens-producao-empty" class="hidden p-12 text-center">
+                            <h4 class="text-sm font-semibold text-slate-700">Nenhuma ordem de produção</h4>
+                            <p class="text-xs text-slate-500 mt-1">Inicie uma nova ordem para reservar insumos.</p>
+                        </div>
+                    </div>
+                </section>
+
+
                  <section id="sec-relatorio" class="section-content space-y-6">
 <!-- Cards de Resumo do Relatório -->
                  <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -553,6 +602,50 @@
             </div>
 
         </div>
+
+        <!-- Modal Registrar Perda O.P. -->
+        <div id="modal-op-perda" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+            <div class="bg-white w-full max-w-lg rounded-2xl shadow-2xl border border-slate-100 overflow-hidden">
+                <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+                    <h3 class="text-base font-bold text-slate-900">Registrar Perda / Não Conformidade</h3>
+                    <button type="button" onclick="closeModal('modal-op-perda')" class="text-slate-400 hover:text-slate-600 p-1 rounded-lg"><i data-lucide="x" class="w-5 h-5"></i></button>
+                </div>
+                <div class="p-5 space-y-3">
+                    <select id="loss-order" onchange="updateLossOrderPreview()" class="w-full px-3 py-2.5 bg-white border border-slate-300 rounded-lg text-sm"></select>
+                    <select id="loss-item" onchange="updateLossCostPreview()" class="w-full px-3 py-2.5 bg-white border border-slate-300 rounded-lg text-sm"></select>
+                    <input id="loss-quantity" type="number" oninput="updateLossCostPreview()" min="0" step="any" placeholder="Quantidade perdida" class="w-full px-3 py-2.5 border border-slate-300 rounded-lg text-sm">
+                    <input id="loss-description" type="text" maxlength="500" placeholder="Descrição da ocorrência" class="w-full px-3 py-2.5 border border-slate-300 rounded-lg text-sm">
+                    <div id="loss-cost-preview" class="hidden rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900" aria-live="polite">
+                        Custo estimado da quantidade perdida: 
+                        <strong id="loss-cost-estimate"></strong>
+                    </div>
+                    <div class="flex justify-end">
+                        <button type="button" onclick="registerLoss()" class="px-5 py-2.5 bg-amber-600 hover:bg-amber-700 text-white text-sm font-semibold rounded-lg">Registrar Perda</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Modal Encerrar O.P. -->
+        <div id="modal-op-encerrar" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+            <div class="bg-white w-full max-w-lg rounded-2xl shadow-2xl border border-slate-100 overflow-hidden">
+                <div class="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+                    <h3 class="text-base font-bold text-slate-900">Encerrar Ordem de Produção</h3>
+                    <button type="button" onclick="closeModal('modal-op-encerrar')" class="text-slate-400 hover:text-slate-600 p-1 rounded-lg"><i data-lucide="x" class="w-5 h-5"></i></button>
+                </div>
+                <div class="p-5 space-y-3">
+                    <select id="close-order" onchange="updateCloseOrderPreview()" class="w-full px-3 py-2.5 bg-white border border-slate-300 rounded-lg text-sm"></select>
+                    <input id="close-yield" type="number" min="1" step="1" placeholder="Rendimento real (UN)" class="w-full px-3 py-2.5 border border-slate-300 rounded-lg text-sm">
+                    <input id="close-final-loss" type="number" min="0" step="any" placeholder="Perdas finais (R$)" class="w-full px-3 py-2.5 border border-slate-300 rounded-lg text-sm">
+                    <input id="close-note" type="text" maxlength="500" placeholder="Observações" class="w-full px-3 py-2.5 border border-slate-300 rounded-lg text-sm">
+                    <div class="flex justify-end gap-2">
+                        <button type="button" onclick="cancelProductionOrder()" class="px-4 py-2.5 text-sm font-semibold text-rose-600 hover:bg-rose-50 rounded-lg">Cancelar Ordem</button>
+                        <button type="button" onclick="closeProductionOrder()" class="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold rounded-lg">Encerrar Ordem</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
 
         <!-- Modal Cadastro de Novo Item -->
         <div id="modal-new-item" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
@@ -727,8 +820,8 @@
                     <div class="flex items-center gap-3">
                         <div class="p-2 bg-emerald-100 text-emerald-700 rounded-lg"><i data-lucide="factory" class="w-5 h-5"></i></div>
                         <div>
-                            <h3 class="text-base font-bold text-slate-900">Registrar Produção</h3>
-                            <p class="text-[11px] text-slate-500">Os insumos serão baixados automaticamente.</p>
+                            <h3 class="text-base font-bold text-slate-900">Ordens de Produção (O.P.)</h3>
+                            <p class="text-[11px] text-slate-500">Reserva de insumos, controle de perdas e encerramento de lote.</p>
                         </div>
                     </div>
                     <button type="button" onclick="closeModal('modal-producao')" aria-label="Fechar" class="text-slate-400 hover:text-slate-600 p-1 rounded-lg">
@@ -769,7 +862,7 @@
                 </div>
                 <div class="px-5 py-4 bg-slate-50 border-t border-slate-100 flex justify-end gap-2 shrink-0">
                     <button type="button" onclick="closeModal('modal-producao')" class="px-4 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-200 rounded-lg">Cancelar</button>
-                    <button id="production-submit" type="button" onclick="registerProduction()" disabled class="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60 text-white text-sm font-semibold rounded-lg">Confirmar Produção</button>
+                    <button id="production-submit" type="button" onclick="registerProduction()" disabled class="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60 text-white text-sm font-semibold rounded-lg">Iniciar Ordem</button>
                 </div>
             </div>
         </div>
