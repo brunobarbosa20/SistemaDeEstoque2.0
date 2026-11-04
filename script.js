@@ -302,6 +302,31 @@ let supabaseClient = null;
 let currentUser = null;
 let itemsList = [];
 let currentStockTypeFilter = 'ALL';
+
+// ===== Categorias de item =====
+// Valores gravados na coluna "categoria" da tabela "itens" (itens antigos ficam com NULL)
+const ITEM_CATEGORIES = {
+    INGREDIENTE: 'Ingrediente',
+    EMBALAGEM: 'Embalagem',
+    PRODUTO_PRONTO: 'Produto Pronto'
+};
+// Botão de filtro da tela de estoque -> categoria
+const STOCK_FILTER_TO_CATEGORY = {
+    INGREDIENT: 'INGREDIENTE',
+    PACKAGING: 'EMBALAGEM',
+    FINISHED: 'PRODUTO_PRONTO'
+};
+
+function normalizeCategory(value) {
+    const key = String(value || '').trim().toUpperCase();
+    return Object.prototype.hasOwnProperty.call(ITEM_CATEGORIES, key) ? key : null;
+}
+
+function getCategoryLabel(value) {
+    const key = normalizeCategory(value);
+    return key ? ITEM_CATEGORIES[key] : '';
+}
+
 let relatorioData = [];
 let relatorioSortCol = null;
 let relatorioSortDir = 'desc'; // 'desc' ou 'asc'
@@ -582,6 +607,7 @@ async function loadItems() {
         // Garante que os campos numéricos vêm tratados e nunca vazios/undefined
         itemsList = (data || []).map(i => ({
             ...i,
+            categoria: normalizeCategory(i.categoria),
             quantidade: Number(i.quantidade) || 0,
             custo_medio: Number(i.custo_medio) || 0,
             status: i.status === 'COM MOVIMENTAÇÕES' ? 'ATIVO NO ESTOQUE' : (i.status || (Number(i.quantidade) > 0 ? 'ATIVO NO ESTOQUE' : 'SEM MOVIMENTAÇÕES'))
@@ -1965,8 +1991,8 @@ async function registerLoss() {
         if (perdaError) throw perdaError;
 
         document.getElementById('loss-quantity').value = '';
-        document.getElementById('loss-cost').value = '';
         document.getElementById('loss-description').value = '';
+        updateLossCostPreview();
         await loadProductionOrders();
         await loadItems();
         await loadHomeDashboard();
@@ -2037,12 +2063,13 @@ async function closeProductionOrder() {
             const newAvg = newQty > 0 ? ((oldQty * oldCost) + (yieldQty * unitCostPa)) / newQty : unitCostPa;
             const { error: paError } = await supabaseClient
                 .from('itens')
-                .update({ quantidade: newQty, custo_medio: newAvg, status: 'ATIVO NO ESTOQUE' })
+                .update({ quantidade: newQty, custo_medio: newAvg, status: 'ATIVO NO ESTOQUE', categoria: normalizeCategory(paItem.categoria) || 'PRODUTO_PRONTO' })
                 .eq('id', paItem.id)
                 .eq('user_id', currentUser.id);
             if (paError) throw paError;
             paItem.quantidade = newQty;
             paItem.custo_medio = newAvg;
+            paItem.categoria = normalizeCategory(paItem.categoria) || 'PRODUTO_PRONTO';
         } else {
             const { data: created, error: createError } = await supabaseClient
                 .from('itens')
@@ -2051,6 +2078,7 @@ async function closeProductionOrder() {
                     codigo: generateItemCode(),
                     user_id: currentUser.id,
                     titulo: paName,
+                    categoria: 'PRODUTO_PRONTO',
                     unidade: 'UN',
                     quantidade: yieldQty,
                     custo_medio: unitCostPa,
@@ -2158,6 +2186,7 @@ function normalizeItem(i) {
     const quantidade = Number(i.quantidade) || 0;
     return {
         ...i,
+        categoria: normalizeCategory(i.categoria),
         quantidade,
         custo_medio: Number(i.custo_medio) || 0,
         status: i.status === 'COM MOVIMENTAÇÕES' ? 'ATIVO NO ESTOQUE' : (i.status || (quantidade > 0 ? 'ATIVO NO ESTOQUE' : 'SEM MOVIMENTAÇÕES'))
@@ -2208,10 +2237,9 @@ function renderItems() {
         const searchableText = `${item.titulo || ''} ${item.codigo || ''}`.toLocaleLowerCase('pt-BR');
         const matchesSearch = searchableText.includes(search);
         const matchesUnit = filterUnit === 'ALL' || String(item.unidade || '').toUpperCase() === filterUnit;
-        const isFinishedProduct = isFinishedStockProduct(item);
+        // Filtro por categoria; itens antigos sem categoria só aparecem em "Todos"
         const matchesType = currentStockTypeFilter === 'ALL' ||
-            (currentStockTypeFilter === 'FINISHED' && isFinishedProduct) ||
-            (currentStockTypeFilter === 'INGREDIENT' && !isFinishedProduct);
+            normalizeCategory(item.categoria) === STOCK_FILTER_TO_CATEGORY[currentStockTypeFilter];
         return matchesSearch && matchesUnit && matchesType;
     });
 
@@ -2249,8 +2277,17 @@ function renderItems() {
             statusBadge = '<span class="px-2.5 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full text-[11px] font-medium whitespace-nowrap">Ativo no Estoque</span>';
         }
 
+        const categoryKey = normalizeCategory(item.categoria);
+        const missingCategoryBadge = categoryKey ? '' :
+            '<span role="img" aria-label="Categoria não definida" title="Categoria não definida — clique no item para definir" ' +
+            'class="ml-2 inline-flex items-center justify-center w-5 h-5 rounded-full bg-amber-100 text-amber-700 border border-amber-300 text-[11px] font-bold align-middle">!</span>';
+        const categoryCell = categoryKey
+            ? `<span class="px-2 py-0.5 bg-slate-100 text-slate-700 rounded text-xs font-medium">${ITEM_CATEGORIES[categoryKey]}</span>`
+            : '<span class="text-xs font-medium text-amber-700">Não definida</span>';
+
         tr.innerHTML = `
-            <td class="px-3 sm:px-6 py-4 font-semibold text-slate-900 min-w-[140px]">${escapeHtml(item.titulo)}</td>
+            <td class="px-3 sm:px-6 py-4 font-semibold text-slate-900 min-w-[140px]">${escapeHtml(item.titulo)}${missingCategoryBadge}</td>
+            <td class="hidden md:table-cell px-6 py-4 whitespace-nowrap">${categoryCell}</td>
             <td class="px-3 sm:px-6 py-4 whitespace-nowrap">
                 <span class="px-2 py-0.5 bg-slate-100 text-slate-600 rounded text-xs font-mono font-medium">${item.unidade}</span>
             </td>
@@ -2271,18 +2308,14 @@ function renderItems() {
     if (window.lucide) lucide.createIcons();
 }
 
-function isFinishedStockProduct(item) {
-    const itemName = normalizeName(item.titulo || item.nome || '');
-    return !!itemName && recipesList.some(recipe => normalizeName(recipe.nome) === itemName);
-}
-
 function setStockTypeFilter(type) {
-    const validTypes = ['ALL', 'INGREDIENT', 'FINISHED'];
+    const validTypes = ['ALL', 'INGREDIENT', 'PACKAGING', 'FINISHED'];
     currentStockTypeFilter = validTypes.includes(type) ? type : 'ALL';
 
     const buttonIds = {
         ALL: 'stock-type-all',
         INGREDIENT: 'stock-type-ingredient',
+        PACKAGING: 'stock-type-packaging',
         FINISHED: 'stock-type-finished'
     };
     Object.entries(buttonIds).forEach(([filterType, buttonId]) => {
@@ -2309,6 +2342,7 @@ function closeModal(id) {
 
 function openNewItemModal() {
     document.getElementById('new-title').value = '';
+    document.getElementById('new-category').value = 'INGREDIENTE';
     document.getElementById('new-unit').value = 'GR';
     document.getElementById('new-has-movement').checked = false;
     document.getElementById('movement-fields').classList.add('hidden');
@@ -2317,9 +2351,47 @@ function openNewItemModal() {
     document.getElementById('new-unit-price-toggle').checked = false;
     const preview = document.getElementById('new-calculated-preview');
     if (preview) preview.classList.add('hidden');
+    applyNewItemCategoryRules(); // reabilita unidade / primeira entrada para a categoria padrão
     calculateNewItemUnitPreview(); // garante o rótulo "Valor Total Pago (R$)" ao abrir
     openModal('modal-new-item');
     if (window.lucide) lucide.createIcons();
+}
+
+// Regras do cadastro por categoria:
+//  - Embalagem: unidade fixa em UN (campo bloqueado)
+//  - Ingrediente: GR, ML ou UN à escolha
+//  - Produto Pronto: só referência de catálogo, sem primeira entrada (saldo inicial 0)
+function applyNewItemCategoryRules() {
+    const category = normalizeCategory(document.getElementById('new-category').value) || 'INGREDIENTE';
+    const unitSelect = document.getElementById('new-unit');
+    const firstEntryBlock = document.getElementById('new-first-entry-block');
+    const hasMovement = document.getElementById('new-has-movement');
+    const hint = document.getElementById('new-category-hint');
+
+    if (category === 'EMBALAGEM') {
+        unitSelect.value = 'UN';
+        unitSelect.disabled = true;
+    } else {
+        unitSelect.disabled = false;
+    }
+
+    if (category === 'PRODUTO_PRONTO') {
+        hasMovement.checked = false;
+        toggleMovementFields();
+        if (firstEntryBlock) firstEntryBlock.classList.add('hidden');
+    } else if (firstEntryBlock) {
+        firstEntryBlock.classList.remove('hidden');
+    }
+
+    if (hint) {
+        const messages = {
+            EMBALAGEM: 'Embalagens são sempre controladas em UN.',
+            PRODUTO_PRONTO: 'Produto pronto é apenas uma referência de catálogo: o cadastro não altera o estoque (saldo inicial 0).'
+        };
+        hint.textContent = messages[category] || '';
+        hint.classList.toggle('hidden', !messages[category]);
+    }
+    calculateNewItemUnitPreview();
 }
 
 function toggleMovementFields() {
@@ -2385,11 +2457,17 @@ async function handleCreateItemSubmit(event) {
     event.preventDefault();
     const rawTitle = document.getElementById('new-title').value.trim();
     const title = rawTitle.charAt(0).toUpperCase() + rawTitle.slice(1);
-    const unit = document.getElementById('new-unit').value;
-    const hasMovement = document.getElementById('new-has-movement').checked;
+    const category = normalizeCategory(document.getElementById('new-category').value);
+    // Regras reforçadas aqui também (não dependem só do estado dos campos na tela)
+    const unit = category === 'EMBALAGEM' ? 'UN' : document.getElementById('new-unit').value;
+    const hasMovement = category !== 'PRODUTO_PRONTO' && document.getElementById('new-has-movement').checked;
 
     if (!title) {
         showToast('Informe o nome do item.', 'error');
+        return;
+    }
+    if (!category) {
+        showToast('Selecione a categoria do item.', 'error');
         return;
     }
 
@@ -2424,6 +2502,7 @@ async function handleCreateItemSubmit(event) {
         codigo,
         user_id: currentUser.id,
         titulo: title,
+        categoria: category,
         unidade: unit,
         quantidade: current_stock,
         custo_medio: avg_unit_cost,
@@ -2438,6 +2517,7 @@ async function handleCreateItemSubmit(event) {
                 codigo: newItem.codigo,
                 user_id: currentUser.id,
                 titulo: title,
+                categoria: category,
                 unidade: unit,
                 quantidade: Number(current_stock) || 0,
                 custo_medio: Number(avg_unit_cost) || 0,
@@ -2462,6 +2542,11 @@ async function handleCreateItemSubmit(event) {
             }
         } catch (err) {
             console.error(err);
+            // Coluna "categoria" ainda não criada no Supabase: não finge que salvou
+            if (/categoria/i.test(String(err && err.message))) {
+                showToast('Não foi possível salvar: a coluna "categoria" não existe na tabela itens. Execute o SQL de migração no Supabase.', 'error');
+                return;
+            }
             itemsList.unshift(newItem);
             populateItemsDatalist();
         }
@@ -3109,8 +3194,10 @@ function openItemDetailsModal(id) {
     if (idEl) idEl.textContent = item.codigo || item.id || 'ID';
     
     document.getElementById('edit-item-title').value = item.titulo || item.title || '';
+    document.getElementById('edit-item-category').value = normalizeCategory(item.categoria) || '';
     document.getElementById('edit-item-unit').value = item.unidade || item.unit || '';
-    
+    applyEditCategoryRules();
+
     // Cards do topo (Saldo, Custo Médio, Status)
     updateModalStatsUI(item);
 
@@ -3127,7 +3214,8 @@ function openItemDetailsModal(id) {
     }
     setMovType('IN');
 
-    setEditSection(false);
+    // Item antigo sem categoria: já abre a edição para a categoria ser definida
+    setEditSection(!normalizeCategory(item.categoria));
     loadItemHistory(item.id);
 
     openModal('modal-item-details');
@@ -3170,11 +3258,24 @@ async function loadItemHistory(itemId) {
     });
 }
 
+// Embalagem: unidade fixa em UN (campo bloqueado) também na edição do cadastro
+function applyEditCategoryRules() {
+    const category = normalizeCategory(document.getElementById('edit-item-category').value);
+    const unitSelect = document.getElementById('edit-item-unit');
+    if (category === 'EMBALAGEM') {
+        unitSelect.value = 'UN';
+        unitSelect.disabled = true;
+    } else {
+        unitSelect.disabled = false;
+    }
+}
+
 async function saveItemEdits() {
     if (!currentItemId) return;
     const rawTitle = document.getElementById('edit-item-title').value.trim();
     const title = rawTitle.charAt(0).toUpperCase() + rawTitle.slice(1);
-    const unit = document.getElementById('edit-item-unit').value;
+    const category = normalizeCategory(document.getElementById('edit-item-category').value);
+    const unit = category === 'EMBALAGEM' ? 'UN' : document.getElementById('edit-item-unit').value;
     if (!title) {
         showToast('Título inválido.', 'error');
         return;
@@ -3182,13 +3283,34 @@ async function saveItemEdits() {
     }
     const item = itemsList.find(i => String(i.id) === String(currentItemId));
     if (!item) return;
+
+    // Trocar a unidade de um item que já tem movimentações mudaria o significado do saldo e do custo
+    const hasMovements = (Number(item.quantidade) || 0) > 0 || item.status === 'ATIVO NO ESTOQUE';
+    if (category === 'EMBALAGEM' && item.unidade && item.unidade !== 'UN' && hasMovements) {
+        showToast('Este item já tem movimentações em ' + item.unidade + ' e não pode virar Embalagem (UN) sem corromper o saldo e o custo.', 'error');
+        return;
+    }
+
+    const previous = { titulo: item.titulo, unidade: item.unidade, categoria: item.categoria || null };
     item.titulo = title;
     item.unidade = unit;
+    item.categoria = category;
 
     if (supabaseClient && !currentUser.id.startsWith('offline-') && !String(item.id).startsWith('local-')) {
         try {
-            await supabaseClient.from('itens').update({ titulo: title, unidade: unit }).eq('id', item.id);
-        } catch (e) { console.error(e); }
+            const { error } = await supabaseClient.from('itens')
+                .update({ titulo: title, unidade: unit, categoria: category })
+                .eq('id', item.id)
+                .eq('user_id', currentUser.id);
+            if (error) throw error;
+        } catch (e) {
+            console.error(e);
+            item.titulo = previous.titulo;
+            item.unidade = previous.unidade;
+            item.categoria = previous.categoria;
+            showToast('Erro ao atualizar o cadastro: ' + (e && e.message ? e.message : e), 'error');
+            return;
+        }
     } else {
         saveItemsLocalFallback();
     }
@@ -3198,7 +3320,7 @@ async function saveItemEdits() {
     updateModalStatsUI(item);
     renderItems();
     populateItemsDatalist();
-    showToast('InformaÃ§Ãµes atualizadas.', 'success');
+    showToast('Informações atualizadas.', 'success');
     setEditSection(false);
 }
 

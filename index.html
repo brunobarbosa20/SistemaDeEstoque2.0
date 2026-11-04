@@ -324,8 +324,9 @@
                     <div class="flex items-center justify-between gap-3">
                         <div class="flex min-w-0 flex-nowrap gap-2 overflow-x-auto pb-1" role="group" aria-label="Filtrar por tipo de item">
                             <button id="stock-type-all" type="button" onclick="setStockTypeFilter('ALL')" aria-pressed="true" class="stock-type-filter is-active bg-brand-600 border-brand-600 text-white px-3 py-2 text-xs font-semibold rounded-lg border transition-colors whitespace-nowrap shrink-0">Todos</button>
-                            <button id="stock-type-ingredient" type="button" onclick="setStockTypeFilter('INGREDIENT')" aria-pressed="false" class="stock-type-filter bg-white border-slate-200 text-slate-600 hover:bg-slate-50 px-3 py-2 text-xs font-semibold rounded-lg border transition-colors whitespace-nowrap shrink-0">Ingredientes em Geral</button>
-                            <button id="stock-type-finished" type="button" onclick="setStockTypeFilter('FINISHED')" aria-pressed="false" class="stock-type-filter bg-white border-slate-200 text-slate-600 hover:bg-slate-50 px-3 py-2 text-xs font-semibold rounded-lg border transition-colors whitespace-nowrap shrink-0">Produtos Acabados</button>
+                            <button id="stock-type-ingredient" type="button" onclick="setStockTypeFilter('INGREDIENT')" aria-pressed="false" class="stock-type-filter bg-white border-slate-200 text-slate-600 hover:bg-slate-50 px-3 py-2 text-xs font-semibold rounded-lg border transition-colors whitespace-nowrap shrink-0">Ingredientes</button>
+                            <button id="stock-type-packaging" type="button" onclick="setStockTypeFilter('PACKAGING')" aria-pressed="false" class="stock-type-filter bg-white border-slate-200 text-slate-600 hover:bg-slate-50 px-3 py-2 text-xs font-semibold rounded-lg border transition-colors whitespace-nowrap shrink-0">Embalagens</button>
+                            <button id="stock-type-finished" type="button" onclick="setStockTypeFilter('FINISHED')" aria-pressed="false" class="stock-type-filter bg-white border-slate-200 text-slate-600 hover:bg-slate-50 px-3 py-2 text-xs font-semibold rounded-lg border transition-colors whitespace-nowrap shrink-0">Produtos Prontos</button>
                         </div>
                         <div class="flex shrink-0 gap-3">
                             <button onclick="openNewPurchaseModal()" class="w-full sm:w-auto justify-center px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-medium text-sm rounded-lg shadow-sm shadow-emerald-600/30 flex items-center gap-2 transition-all shrink-0">
@@ -348,6 +349,7 @@
                             <thead class="bg-slate-50 border-b border-slate-200 text-xs text-slate-500 uppercase tracking-wider whitespace-nowrap">
                                 <tr>
                                     <th class="px-3 sm:px-6 py-3.5 font-semibold">Descrição do Item</th>
+                                    <th class="hidden md:table-cell px-6 py-3.5 font-semibold">Categoria</th>
                                     <th class="px-3 sm:px-6 py-3.5 font-semibold">Unidade</th>
                                     <th class="px-3 sm:px-6 py-3.5 font-semibold">Saldo Atual</th>
                                     <th class="hidden md:table-cell px-6 py-3.5 font-semibold">Custo Médio Unitário</th>
@@ -667,9 +669,22 @@
                     </div>
 
                     <div>
-                        <label class="block text-xs font-semibold text-slate-700 mb-1">Unidade de Medida *</label>
+                        <label for="new-category" class="block text-xs font-semibold text-slate-700 mb-1">Categoria *</label>
                         <div class="relative">
-                            <select id="new-unit" required class="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-brand-500 appearance-none cursor-pointer pr-8">
+                            <select id="new-category" required onchange="applyNewItemCategoryRules()" class="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-brand-500 appearance-none cursor-pointer pr-8">
+                                <option value="INGREDIENTE">Ingrediente</option>
+                                <option value="EMBALAGEM">Embalagem</option>
+                                <option value="PRODUTO_PRONTO">Produto Pronto</option>
+                            </select>
+                            <span class="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400 text-xs">▼</span>
+                        </div>
+                        <p id="new-category-hint" class="text-[11px] text-slate-500 mt-1 hidden"></p>
+                    </div>
+
+                    <div>
+                        <label for="new-unit" class="block text-xs font-semibold text-slate-700 mb-1">Unidade de Medida *</label>
+                        <div class="relative">
+                            <select id="new-unit" required class="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-brand-500 appearance-none cursor-pointer pr-8 disabled:bg-slate-100 disabled:text-slate-500 disabled:cursor-not-allowed">
                                 <option value="GR">GR - Gramas</option>
                                 <option value="UN">UN - Unidades</option>
                                 <option value="ML">ML - Mililitros</option>
@@ -678,7 +693,7 @@
                         </div>
                     </div>
 
-                    <div class="pt-2 border-t border-slate-100">
+                    <div id="new-first-entry-block" class="pt-2 border-t border-slate-100">
                         <label class="flex items-center gap-2 cursor-pointer">
                             <input type="checkbox" id="new-has-movement" onchange="toggleMovementFields()" class="w-4 h-4 text-brand-600 rounded border-slate-300 focus:ring-brand-500">
                             <span class="text-xs font-semibold text-slate-800">Registrar primeira entrada imediatamente</span>
@@ -1038,13 +1053,22 @@
                     <div class="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
                         <span class="text-xs font-bold text-slate-500 uppercase tracking-wider block">Edição de Cadastro</span>
                         <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                            <div class="sm:col-span-2">
+                            <div class="sm:col-span-3">
                                 <label class="block text-xs font-medium text-slate-700 mb-1">Título do Item</label>
                                 <input type="text" id="edit-item-title" class="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-sm">
                             </div>
+                            <div class="sm:col-span-2">
+                                <label for="edit-item-category" class="block text-xs font-medium text-slate-700 mb-1">Categoria</label>
+                                <select id="edit-item-category" onchange="applyEditCategoryRules()" class="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-sm">
+                                    <option value="">Selecione a categoria...</option>
+                                    <option value="INGREDIENTE">Ingrediente</option>
+                                    <option value="EMBALAGEM">Embalagem</option>
+                                    <option value="PRODUTO_PRONTO">Produto Pronto</option>
+                                </select>
+                            </div>
                             <div>
-                                <label class="block text-xs font-medium text-slate-700 mb-1">Unidade</label>
-                                <select id="edit-item-unit" class="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-sm">
+                                <label for="edit-item-unit" class="block text-xs font-medium text-slate-700 mb-1">Unidade</label>
+                                <select id="edit-item-unit" class="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-sm disabled:bg-slate-100 disabled:text-slate-500 disabled:cursor-not-allowed">
                                     <option value="GR">GR - Gramas</option>
                                     <option value="UN">UN - Unidades</option>
                                     <option value="ML">ML - Mililitros</option>
