@@ -192,6 +192,11 @@ function setMovType(type) {
     updateMovPreview();
 }
 
+// Valor financeiro de uma saída: quantidade × custo médio atual (sem digitação de preço)
+function calcExitTotal(qty, avgCost) {
+    return (Number(qty) || 0) * (Number(avgCost) || 0);
+}
+
 // Mostra uma prévia do resultado antes de registrar (bom para conferir no celular)
 function updateMovPreview() {
     const box = document.getElementById('mov-preview');
@@ -222,7 +227,11 @@ function updateMovPreview() {
         text = 'Estoque insuficiente: saldo atual é ' + fmt(saldo);
         cls = 'bg-rose-100 text-rose-800 border-rose-300';
     } else {
-        text = 'Valor da saída: ' + formatCurrency((Number(item.custo_medio) || 0) * qty) + ' · Saldo restante: ' + fmt(saldo - qty);
+        // Saída: o valor financeiro é sempre calculado automaticamente pelo custo médio atual
+        const avgCost = Number(item.custo_medio) || 0;
+        text = 'Valor baixado do estoque: ' + formatCurrency(calcExitTotal(qty, avgCost)) +
+               ' (calculado via custo médio de ' + formatUnitCost(avgCost) + ' / ' + un.toLowerCase() + ')' +
+               ' · Novo saldo: ' + fmt(saldo - qty);
         cls = 'bg-rose-50 text-rose-800 border-rose-200';
     }
     box.className = base + cls;
@@ -348,6 +357,9 @@ function toggleMovCostField() {
 
     if (container) {
         container.classList.toggle('mov-cost-hidden', !isEntrada);
+        container.setAttribute('aria-hidden', isEntrada ? 'false' : 'true');
+        // Na saída o campo some de vez (inclui o seletor "Valor Unitário"): o operador só digita a quantidade
+        container.style.display = isEntrada ? '' : 'none';
     }
 
     if (isEntrada) {
@@ -3212,7 +3224,8 @@ async function registerMovement() {
         const isUnitPrice = document.getElementById('mov-unit-price-toggle').checked;
         totalCost = calcEntryTotal(qty, rawValue, item.unidade, isUnitPrice);
     } else {
-        totalCost = (item.custo_medio || 0) * qty;
+        // Saída: valor_total = quantidade × custo médio atual (nunca vem de digitação)
+        totalCost = calcExitTotal(qty, item.custo_medio);
     }
 
     if (qty <= 0) {
@@ -3240,7 +3253,7 @@ async function registerMovement() {
         user_id: currentUser.id,
         tipo: type,
         quantidade: qty,
-        valor_total: type === 'ENTRADA' ? totalCost : unitCost * qty,
+        valor_total: totalCost,
         custo_unitario: unitCost,
         created_at: movementDateIso
     };
@@ -3271,11 +3284,17 @@ async function registerMovement() {
             }]).select('id').single();
             if (historyError) throw historyError;
 
-            const { error: updateError } = await supabaseClient.from('itens').update({
-                quantidade: Number(item.quantidade) || 0,
-                custo_medio: Number(item.custo_medio) || 0,
-                status: item.status
-            }).eq('id', item.id);
+            // Na saída o custo médio não muda: só o saldo é reduzido
+            const itemUpdate = type === 'ENTRADA'
+                ? {
+                    quantidade: Number(item.quantidade) || 0,
+                    custo_medio: Number(item.custo_medio) || 0,
+                    status: item.status
+                }
+                : { quantidade: Number(item.quantidade) || 0 };
+            const { error: updateError } = await supabaseClient.from('itens').update(itemUpdate)
+                .eq('id', item.id)
+                .eq('user_id', currentUser.id);
             if (updateError) {
                 const { error: rollbackError } = await supabaseClient.from('historico').delete()
                     .eq('id', historyRow.id)
