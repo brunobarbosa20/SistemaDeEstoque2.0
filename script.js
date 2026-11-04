@@ -670,6 +670,9 @@ async function loadRecipes() {
     }
 }
 
+let currentDetailOrderId = null;
+
+// Substitua a função renderProductionOrders antiga por esta:
 function renderProductionOrders() {
     const tbody = document.getElementById('ordens-producao-table-body');
     const empty = document.getElementById('ordens-producao-empty');
@@ -693,27 +696,133 @@ function renderProductionOrders() {
         const recipe = recipesList.find(r => String(r.id) === String(order.receita_id));
         const name = recipe ? recipe.nome : 'Receita';
         const tr = document.createElement('tr');
-        tr.className = 'hover:bg-slate-50/80';
+        tr.className = 'hover:bg-slate-50/80 transition-colors cursor-pointer border-b border-slate-100';
+        tr.onclick = () => openProductionOrderDetails(order.id); // Clicar na linha abre o painel detalhado
+
         const statusClass = String(order.status) === 'EM_ANDAMENTO'
             ? 'bg-amber-50 text-amber-700 border-amber-200'
             : String(order.status) === 'CONCLUIDA'
                 ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                 : 'bg-slate-100 text-slate-600 border-slate-200';
-        const actions = String(order.status) === 'EM_ANDAMENTO'
-            ? `<button type="button" onclick="openLossModal('${order.id}')" class="px-2 py-1 text-xs font-semibold text-amber-700 hover:bg-amber-50 rounded">Perda</button>
-               <button type="button" onclick="openCloseModal('${order.id}')" class="px-2 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 rounded">Encerrar</button>
-               <button type="button" onclick="cancelProductionOrderById('${order.id}')" class="px-2 py-1 text-xs font-semibold text-rose-600 hover:bg-rose-50 rounded">Cancelar</button>`
-            : '';
+
         tr.innerHTML = `
-            <td class="px-3 sm:px-6 py-3 font-mono text-xs">${String(order.id).slice(0,8)}</td>
-            <td class="px-3 sm:px-6 py-3 font-semibold text-slate-900">${escapeHtml(name)}</td>
-            <td class="px-3 sm:px-6 py-3 text-right">${Number(order.quantidade_planejada).toLocaleString('pt-BR')}</td>
-            <td class="px-3 sm:px-6 py-3 text-right">${formatCurrency(order.custo_acumulado)}</td>
-            <td class="px-3 sm:px-6 py-3"><span class="px-2 py-0.5 border rounded text-[11px] font-semibold ${statusClass}">${order.status}</span></td>
-            <td class="px-3 sm:px-6 py-3 text-right space-x-1">${actions}</td>
+            <td class="px-3 sm:px-6 py-3.5 font-mono text-xs text-slate-500">${String(order.id).slice(0,8)}</td>
+            <td class="px-3 sm:px-6 py-3.5 font-semibold text-slate-900">${escapeHtml(name)}</td>
+            <td class="px-3 sm:px-6 py-3.5 text-right font-medium">${Number(order.quantidade_planejada).toLocaleString('pt-BR')} UN</td>
+            <td class="px-3 sm:px-6 py-3.5 text-right font-bold text-emerald-700">${formatCurrency(order.custo_acumulado)}</td>
+            <td class="px-3 sm:px-6 py-3.5"><span class="px-2.5 py-1 border rounded-full text-[11px] font-semibold ${statusClass}">${order.status}</span></td>
+            <td class="px-3 sm:px-6 py-3.5 text-right">
+                <button type="button" onclick="event.stopPropagation(); openProductionOrderDetails('${order.id}')" class="p-1.5 text-slate-400 hover:text-brand-600 hover:bg-brand-50 rounded-lg" title="Ver detalhes">
+                    <i data-lucide="eye" class="w-4 h-4"></i>
+                </button>
+            </td>
         `;
         tbody.appendChild(tr);
     });
+    if (window.lucide) window.lucide.createIcons();
+}
+
+// Adicione estas novas funções logo abaixo de renderProductionOrders:
+async function openProductionOrderDetails(orderId) {
+    const order = productionOrdersList.find(o => String(o.id) === String(orderId));
+    if (!order) return;
+    currentDetailOrderId = order.id;
+
+    const recipe = recipesList.find(r => String(r.id) === String(order.receita_id));
+    const name = recipe ? recipe.nome : 'Produto Acabado';
+
+    document.getElementById('op-modal-title').textContent = `O.P. #${String(order.id).slice(0,8)} · ${name}`;
+    document.getElementById('op-detail-planned').textContent = `${Number(order.quantidade_planejada).toLocaleString('pt-BR')} UN`;
+    document.getElementById('op-detail-cost').textContent = formatCurrency(order.custo_acumulado);
+    
+    const unitEst = order.quantidade_planejada > 0 ? (order.custo_acumulado / order.quantidade_planejada) : 0;
+    document.getElementById('op-detail-unit-cost').textContent = formatCurrency(unitEst);
+
+    const badge = document.getElementById('op-detail-status-badge');
+    badge.textContent = order.status;
+    badge.className = String(order.status) === 'EM_ANDAMENTO' 
+        ? 'inline-block mt-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200'
+        : 'inline-block mt-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200';
+
+    const isEmAndamento = String(order.status) === 'EM_ANDAMENTO';
+    document.getElementById('op-detail-action-buttons').style.display = isEmAndamento ? 'flex' : 'none';
+    document.getElementById('btn-op-close').style.display = isEmAndamento ? 'inline-flex' : 'none';
+
+    // Renderizar Insumos da Receita/Lote
+    const ingBody = document.getElementById('op-detail-ingredients-body');
+    ingBody.innerHTML = '';
+    (order.itens || []).forEach(oi => {
+        const item = itemsList.find(i => String(i.id) === String(oi.item_id));
+        const itemName = item ? item.titulo : oi.item_id;
+        const unit = item ? item.unidade : '';
+        const res = Number(oi.quantidade_reservada) || 0;
+        const lost = Number(oi.quantidade_perdida) || 0;
+        const unitCost = Number(oi.custo_unitario) || 0;
+        const subtotal = Math.max(0, res - lost) * unitCost;
+
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td class="p-3 font-semibold text-slate-800">${escapeHtml(itemName)}</td>
+            <td class="p-3 text-right">${res.toLocaleString('pt-BR')} ${unit}</td>
+            <td class="p-3 text-right text-rose-600 font-medium">${lost > 0 ? lost.toLocaleString('pt-BR') + ' ' + unit : '—'}</td>
+            <td class="p-3 text-right">${formatUnitCost(unitCost)}</td>
+            <td class="p-3 text-right font-bold text-slate-800">${formatCurrency(subtotal)}</td>
+        `;
+        ingBody.appendChild(tr);
+    });
+
+    // Carregar Histórico de Perdas do Supabase
+    const lossesBody = document.getElementById('op-detail-losses-body');
+    const noLossesMsg = document.getElementById('op-detail-no-losses');
+    lossesBody.innerHTML = '';
+    
+    if (supabaseClient && currentUser) {
+        try {
+            const { data: losses } = await supabaseClient
+                .from('ordem_perdas')
+                .select('*')
+                .eq('ordem_id', order.id)
+                .eq('user_id', currentUser.id);
+
+            if (losses && losses.length > 0) {
+                noLossesMsg.classList.add('hidden');
+                losses.forEach(p => {
+                    const item = itemsList.find(i => String(i.id) === String(p.item_id));
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `
+                        <td class="p-3 font-medium text-slate-800">${item ? escapeHtml(item.titulo) : 'Diversos'}</td>
+                        <td class="p-3 text-right">${Number(p.quantidade || 0).toLocaleString('pt-BR')} ${item ? item.unidade : ''}</td>
+                        <td class="p-3 text-right font-semibold text-rose-600">${formatCurrency(p.custo)}</td>
+                        <td class="p-3 text-slate-500">${escapeHtml(p.descricao || 'Sem descrição')}</td>
+                    `;
+                    lossesBody.appendChild(tr);
+                });
+            } else {
+                noLossesMsg.classList.remove('hidden');
+            }
+        } catch (e) {
+            console.error(e);
+            noLossesMsg.classList.remove('hidden');
+        }
+    }
+
+    openModal('modal-op-details');
+    if (window.lucide) lucide.createIcons();
+}
+
+function triggerOpLossFromDetail() {
+    closeModal('modal-op-details');
+    openLossModal(currentDetailOrderId);
+}
+
+function triggerOpCancelFromDetail() {
+    closeModal('modal-op-details');
+    cancelProductionOrderById(currentDetailOrderId);
+}
+
+function triggerOpCloseFromDetail() {
+    closeModal('modal-op-details');
+    openCloseModal(currentDetailOrderId);
 }
 
 async function loadOrdensProducaoView() {
@@ -2171,11 +2280,58 @@ function openLossModal(orderId) {
     openModal('modal-op-perda');
 }
 
-function openCloseModal(orderId) {
+// Substitua a função openCloseModal antiga por esta:
+// Substitua a função openCloseModal antiga por esta:
+async function openCloseModal(orderId) {
+    const targetId = orderId || currentDetailOrderId;
     updateProductionOrderOptions();
+    
     const select = document.getElementById('close-order');
-    if (select && orderId) select.value = orderId;
+    if (select && targetId) {
+        select.value = targetId;
+    }
+
+    const order = productionOrdersList.find(o => String(o.id) === String(targetId));
+    if (!order) return;
+
+    const recipe = recipesList.find(r => String(r.id) === String(order.receita_id));
+    const name = recipe ? recipe.nome : 'Produto Acabado';
+
+    // Preencher informações visuais do card de resumo
+    document.getElementById('close-preview-name').textContent = `${name} (Planejado: ${Number(order.quantidade_planejada).toLocaleString('pt-BR')} UN)`;
+    document.getElementById('close-preview-cost').textContent = formatCurrency(order.custo_acumulado);
+
+    // Sugerir rendimento real padrão igual ao planejado
+    const yieldInput = document.getElementById('close-yield');
+    if (yieldInput) yieldInput.value = order.quantidade_planejada || '';
+
+    // Somar automaticamente as perdas registradas no histórico/tabela de perdas deste lote
+    let totalLossCost = 0;
+    if (supabaseClient && currentUser) {
+        try {
+            const { data: losses } = await supabaseClient
+                .from('ordem_perdas')
+                .select('custo')
+                .eq('ordem_id', order.id)
+                .eq('user_id', currentUser.id);
+
+            if (losses && losses.length > 0) {
+                totalLossCost = losses.reduce((acc, p) => acc + (Number(p.custo) || 0), 0);
+            }
+        } catch (e) {
+            console.error('Erro ao somar perdas do lote:', e);
+        }
+    }
+
+    // Preencher o campo de perdas finais automaticamente com o somatório
+    const finalLossInput = document.getElementById('close-final-loss');
+    if (finalLossInput) {
+        finalLossInput.value = formatCurrency(totalLossCost);
+    }
+
+    document.getElementById('close-note').value = '';
     openModal('modal-op-encerrar');
+    if (window.lucide) lucide.createIcons();
 }
 
 async function cancelProductionOrderById(orderId) {
