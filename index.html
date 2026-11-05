@@ -33,6 +33,7 @@
     <!-- Supabase JS CDN -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <link rel="stylesheet" href="styles.css">
+    <link rel="icon" href="data:,">
     <style>
         .modal-header-text { visibility:visible !important; opacity:1 !important; }
         .modal-stat-value { display:block !important; visibility:visible !important; opacity:1 !important; }
@@ -134,7 +135,7 @@
 
                 <form id="auth-form" onsubmit="handleAuthSubmit(event)" class="space-y-4">
                     <div>
-                        <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Usuário</label>
+                        <label for="auth-username" class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Usuário</label>
                         <div class="relative">
                             <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400">
                                 <i data-lucide="user" class="w-4 h-4"></i>
@@ -144,7 +145,7 @@
                     </div>
 
                     <div>
-                        <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Senha</label>
+                        <label for="auth-password" class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">Senha</label>
                         <div class="relative">
                             <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400">
                                 <i data-lucide="lock" class="w-4 h-4"></i>
@@ -303,6 +304,7 @@
                 <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-3">
                     <div class="flex flex-col lg:flex-row gap-3 lg:items-center">
                         <div class="relative w-full min-w-0 lg:flex-1">
+                            <label for="search-input" class="sr-only">Buscar itens por nome ou código</label>
                             <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400">
                                 <i data-lucide="search" class="w-4 h-4"></i>
                             </span>
@@ -311,6 +313,7 @@
                         </div>
 
                         <div class="w-full lg:w-56 lg:shrink-0">
+                            <label for="unit-filter" class="sr-only">Filtrar por unidade</label>
                             <select id="unit-filter" onchange="renderItems()" aria-label="Filtrar por unidade" class="w-full bg-slate-50 border border-slate-200 text-slate-700 text-sm rounded-lg px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-brand-500">
                                 <option value="ALL">Todas as Medidas</option>
                                 <option value="GR">Gramas (GR)</option>
@@ -487,26 +490,26 @@
                      </h3>
                      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                          <div>
-                             <label class="block text-xs font-medium text-slate-500 mb-1">Data Inicial</label>
+                             <label for="rep-data-inicial" class="block text-xs font-medium text-slate-500 mb-1">Data Inicial</label>
                              <input type="date" id="rep-data-inicial" class="w-full bg-slate-50 border border-slate-200 rounded-lg text-sm px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-brand-500">
                          </div>
                          <div>
-                             <label class="block text-xs font-medium text-slate-500 mb-1">Data Final</label>
+                             <label for="rep-data-final" class="block text-xs font-medium text-slate-500 mb-1">Data Final</label>
                              <input type="date" id="rep-data-final" class="w-full bg-slate-50 border border-slate-200 rounded-lg text-sm px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-brand-500">
                          </div>
                          <div>
-                             <label class="block text-xs font-medium text-slate-500 mb-1">Nome do Item</label>
+                             <label for="rep-nome" class="block text-xs font-medium text-slate-500 mb-1">Nome do Item</label>
                              <div class="relative">
                                 <input type="text" id="rep-nome" placeholder="Buscar por nome..." class="w-full bg-slate-50 border border-slate-200 rounded-lg text-sm px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-brand-500">
                                 <div id="rep-nome-results" class="autocomplete-results hidden absolute left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-lg text-slate-800 text-sm max-h-48 overflow-y-auto z-50"></div>
                             </div>
                          </div>
                          <div>
-                             <label class="block text-xs font-medium text-slate-500 mb-1">Código do Item</label>
+                             <label for="rep-codigo" class="block text-xs font-medium text-slate-500 mb-1">Código do Item</label>
                              <input type="text" id="rep-codigo" placeholder="Ex: MP... ou ID" class="w-full bg-slate-50 border border-slate-200 rounded-lg text-sm px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-brand-500">
                          </div>
                          <div>
-                             <label class="block text-xs font-medium text-slate-500 mb-1">Tipo de Movimentação</label>
+                             <label for="rep-tipo" class="block text-xs font-medium text-slate-500 mb-1">Tipo de Movimentação</label>
                              <select id="rep-tipo" class="w-full bg-slate-50 border border-slate-200 rounded-lg text-sm px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-brand-500">
                                  <option value="TODOS">Todos</option>
                                  <option value="ENTRADA">Apenas Entradas</option>
@@ -515,11 +518,11 @@
                          </div>
                          <div class="grid grid-cols-2 gap-2">
                              <div>
-                                 <label class="block text-xs font-medium text-slate-500 mb-1">Valor Mín. (R$)</label>
+                                 <label for="rep-valor-min" class="block text-xs font-medium text-slate-500 mb-1">Valor Mín. (R$)</label>
                                  <input type="number" step="0.01" id="rep-valor-min" placeholder="0,00" class="w-full bg-slate-50 border border-slate-200 rounded-lg text-sm px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-brand-500">
                              </div>
                              <div>
-                                 <label class="block text-xs font-medium text-slate-500 mb-1">Valor Máx. (R$)</label>
+                                 <label for="rep-valor-max" class="block text-xs font-medium text-slate-500 mb-1">Valor Máx. (R$)</label>
                                  <input type="number" step="0.01" id="rep-valor-max" placeholder="0,00" class="w-full bg-slate-50 border border-slate-200 rounded-lg text-sm px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-brand-500">
                              </div>
                          </div>
@@ -613,10 +616,22 @@
                     <button type="button" onclick="closeModal('modal-op-perda')" class="text-slate-400 hover:text-slate-600 p-1 rounded-lg"><i data-lucide="x" class="w-5 h-5"></i></button>
                 </div>
                 <div class="p-5 space-y-3">
-                    <select id="loss-order" onchange="updateLossOrderPreview()" class="w-full px-3 py-2.5 bg-white border border-slate-300 rounded-lg text-sm"></select>
-                    <select id="loss-item" onchange="updateLossCostPreview()" class="w-full px-3 py-2.5 bg-white border border-slate-300 rounded-lg text-sm"></select>
-                    <input id="loss-quantity" type="number" oninput="updateLossCostPreview()" min="0" step="any" placeholder="Quantidade perdida" class="w-full px-3 py-2.5 border border-slate-300 rounded-lg text-sm">
-                    <input id="loss-description" type="text" maxlength="500" placeholder="Descrição da ocorrência" class="w-full px-3 py-2.5 border border-slate-300 rounded-lg text-sm">
+                    <div>
+                        <label for="loss-order" class="block text-xs font-semibold text-slate-700 mb-1">Ordem de Produção</label>
+                        <select id="loss-order" onchange="updateLossOrderPreview()" class="w-full px-3 py-2.5 bg-white border border-slate-300 rounded-lg text-sm"></select>
+                    </div>
+                    <div>
+                        <label for="loss-item" class="block text-xs font-semibold text-slate-700 mb-1">Insumo</label>
+                        <select id="loss-item" onchange="updateLossCostPreview()" class="w-full px-3 py-2.5 bg-white border border-slate-300 rounded-lg text-sm"></select>
+                    </div>
+                    <div>
+                        <label for="loss-quantity" class="block text-xs font-semibold text-slate-700 mb-1">Quantidade perdida</label>
+                        <input id="loss-quantity" type="number" oninput="updateLossCostPreview()" min="0" step="any" placeholder="Quantidade perdida" class="w-full px-3 py-2.5 border border-slate-300 rounded-lg text-sm">
+                    </div>
+                    <div>
+                        <label for="loss-description" class="block text-xs font-semibold text-slate-700 mb-1">Descrição da ocorrência</label>
+                        <input id="loss-description" type="text" maxlength="500" placeholder="Descrição da ocorrência" class="w-full px-3 py-2.5 border border-slate-300 rounded-lg text-sm">
+                    </div>
                     <div id="loss-cost-preview" class="hidden rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900" aria-live="polite">
                         Custo estimado da quantidade perdida: 
                         <strong id="loss-cost-estimate"></strong>
@@ -628,14 +643,14 @@
             </div>
         </div>
 
-       <!-- Modal Encerrar O.P. (Estrutura Correta e Completa) -->
+        <!-- Modal Encerrar O.P. (Corrigido e Completo) -->
         <div id="modal-op-encerrar" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
             <div class="bg-white w-full max-w-lg rounded-2xl shadow-2xl border border-slate-100 overflow-hidden flex flex-col">
                 
-                <!-- Cabeçalho -->
+                <!-- Cabeçalho do Modal -->
                 <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
                     <h3 class="font-bold text-slate-800 text-base">Encerrar Ordem de Produção</h3>
-                    <button onclick="closeModal('modal-op-encerrar')" class="text-slate-400 hover:text-slate-600 transition-colors">
+                    <button type="button" onclick="closeModal('modal-op-encerrar')" aria-label="Fechar" class="text-slate-400 hover:text-slate-600 transition-colors">
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                     </button>
                 </div>
@@ -643,19 +658,19 @@
                 <!-- Corpo do Modal -->
                 <div class="p-6 space-y-4">
                     
-                    <!-- ID Oculto da O.P. -->
+                    <!-- Campo Oculto para Guardar o ID da O.P. -->
                     <input type="hidden" id="close-order">
 
-                    <!-- 1. Receita Fixa (Apenas Visual, Travada) -->
+                    <!-- 1. Receita Fixa (Exibição travada, sem permitir alteração) -->
                     <div class="space-y-1">
-                        <label class="block text-xs font-semibold text-slate-700">Receita / Produto da O.P.</label>
+                        <label for="close-order-name-display" class="block text-xs font-semibold text-slate-700">Receita / Produto da O.P.</label>
                         <input type="text" id="close-order-name-display" disabled class="w-full px-3 py-2.5 bg-slate-100 border border-slate-300 rounded-lg text-sm text-slate-600 cursor-not-allowed">
                     </div>
 
-                    <!-- 2. Rendimento Real Obtido (O campo que faltava) -->
+                    <!-- 2. Rendimento Real / Quantidade Produzida (O campo que tinha sumido) -->
                     <div class="space-y-1">
                         <label for="close-yield" class="block text-xs font-semibold text-slate-700">Rendimento Real Obtido (UN) *</label>
-                        <input id="close-yield" type="number" min="1" step="1" inputmode="numeric" placeholder="Ex: 5" class="w-full px-3 py-2.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
+                        <input id="close-yield" type="number" min="1" step="1" inputmode="numeric" placeholder="Ex: 10" class="w-full px-3 py-2.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
                         <p class="text-[11px] text-slate-400">Quantidade física real pronta que entrou no estoque.</p>
                     </div>
 
@@ -681,57 +696,77 @@
             </div>
         </div>
 
-
-        <!-- Modal Encerrar O.P. (Corrigido e Completo) -->
-        <div id="modal-op-encerrar" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
-            <div class="bg-white w-full max-w-lg rounded-2xl shadow-2xl border border-slate-100 overflow-hidden flex flex-col">
-                
-                <!-- Cabeçalho do Modal -->
-                <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
-                    <h3 class="font-bold text-slate-800 text-base">Encerrar Ordem de Produção</h3>
-                    <button onclick="closeModalEncerrar()" class="text-slate-400 hover:text-slate-600 transition-colors">
-                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+        <!-- Modal Cadastro de Novo Item -->
+        <div id="modal-new-item" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+            <div class="bg-white w-full max-w-lg max-h-[92vh] rounded-2xl shadow-2xl border border-slate-100 overflow-hidden flex flex-col">
+                <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50 shrink-0">
+                    <h3 class="text-base font-bold text-slate-900 flex items-center gap-2">
+                        <i data-lucide="plus-circle" class="w-5 h-5 text-brand-600"></i>
+                        Cadastrar Novo Item
+                    </h3>
+                    <button type="button" onclick="closeModal('modal-new-item')" aria-label="Fechar" class="text-slate-400 hover:text-slate-600 p-1 rounded-lg">
+                        <i data-lucide="x" class="w-5 h-5"></i>
                     </button>
                 </div>
 
-                <!-- Corpo do Modal -->
-                <div class="p-6 space-y-4">
-                    
-                    <!-- Campo Oculto para Guardar o ID da O.P. -->
-                    <input type="hidden" id="close-order-id">
-
-                    <!-- 1. Receita Fixa (Exibição travada, sem permitir alteração) -->
-                    <div class="space-y-1">
-                        <label class="block text-xs font-semibold text-slate-700">Receita / Produto da O.P.</label>
-                        <input type="text" id="close-order-name-display" disabled class="w-full px-3 py-2.5 bg-slate-100 border border-slate-300 rounded-lg text-sm text-slate-600 cursor-not-allowed">
+                <form onsubmit="handleCreateItemSubmit(event)" class="p-6 space-y-4 overflow-y-auto">
+                    <div>
+                        <label for="new-title" class="block text-xs font-semibold text-slate-700 mb-1">Descrição / Nome do Item *</label>
+                        <input type="text" id="new-title" required placeholder="Ex: Cacau 100% ou Pote Plástico 500ml" class="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
                     </div>
 
-                    <!-- 2. Rendimento Real / Quantidade Produzida (O campo que tinha sumido) -->
-                    <div class="space-y-1">
-                        <label for="close-yield" class="block text-xs font-semibold text-slate-700">Rendimento Real Obtido (UN) *</label>
-                        <input id="close-yield" type="number" min="1" step="1" inputmode="numeric" placeholder="Ex: 10" class="w-full px-3 py-2.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
-                        <p class="text-[11px] text-slate-400">Quantidade física real pronta que entrou no estoque.</p>
+                    <div>
+                        <label for="new-category" class="block text-xs font-semibold text-slate-700 mb-1">Categoria *</label>
+                        <select id="new-category" required onchange="applyNewItemCategoryRules()" class="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-brand-500">
+                            <option value="INGREDIENTE">Ingrediente</option>
+                            <option value="EMBALAGEM">Embalagem</option>
+                            <option value="PRODUTO_PRONTO">Produto Pronto</option>
+                        </select>
+                        <p id="new-category-hint" class="hidden mt-1 text-[11px] text-slate-500"></p>
                     </div>
 
-                    <!-- 3. Perdas Finais (R$) -->
-                    <div class="space-y-1">
-                        <label for="close-final-loss" class="block text-xs font-semibold text-slate-700">Perdas Finais (R$)</label>
-                        <input id="close-final-loss" type="number" min="0" step="any" placeholder="0.00" class="w-full px-3 py-2.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
+                    <div>
+                        <label for="new-unit" class="block text-xs font-semibold text-slate-700 mb-1">Unidade de Medida *</label>
+                        <select id="new-unit" required class="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:bg-slate-100 disabled:text-slate-500 disabled:cursor-not-allowed">
+                            <option value="GR">GR - Gramas</option>
+                            <option value="UN">UN - Unidades</option>
+                            <option value="ML">ML - Mililitros</option>
+                        </select>
                     </div>
 
-                    <!-- 4. Observações -->
-                    <div class="space-y-1">
-                        <label for="close-note" class="block text-xs font-semibold text-slate-700">Observações</label>
-                        <input id="close-note" type="text" maxlength="500" placeholder="Observações opcionais" class="w-full px-3 py-2.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
+                    <div id="new-first-entry-block" class="pt-2 border-t border-slate-100">
+                        <label for="new-has-movement" class="flex items-center gap-2 cursor-pointer">
+                            <input type="checkbox" id="new-has-movement" onchange="toggleMovementFields()" class="w-4 h-4 text-brand-600 rounded border-slate-300 focus:ring-brand-500">
+                            <span class="text-xs font-semibold text-slate-800">Registrar primeira entrada imediatamente</span>
+                        </label>
+                        <p class="text-[11px] text-slate-500 mt-0.5 pl-6">Se desmarcado, o item fica marcado como "SEM MOVIMENTAÇÕES".</p>
                     </div>
 
-                    <!-- Botões de Ação -->
-                    <div class="flex justify-end gap-2 pt-2">
-                        <button type="button" onclick="closeModalEncerrar()" class="px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50 rounded-lg transition-colors">Cancelar Ordem</button>
-                        <button type="button" onclick="submitEncerrarOrdem()" class="px-5 py-2 text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg shadow-sm transition-colors">Encerrar Ordem</button>
+                    <div id="movement-fields" class="space-y-3 bg-slate-50 p-3.5 rounded-xl border border-slate-200 hidden">
+                        <div class="grid grid-cols-2 gap-3 items-start">
+                            <div>
+                                <label for="new-quantity" class="block h-4 leading-4 text-xs font-medium text-slate-700 mb-1">Quantidade Inserida</label>
+                                <input type="text" inputmode="decimal" autocomplete="off" data-mask="quantity" id="new-quantity" placeholder="Ex: 500" class="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
+                            </div>
+                            <div>
+                                <div class="flex items-center justify-between gap-2 h-4 mb-1">
+                                    <label id="new-price-label" for="new-total-cost" class="block leading-4 text-xs font-medium text-slate-700 whitespace-nowrap">Valor Total Pago (R$)</label>
+                                    <label for="new-unit-price-toggle" class="flex items-center gap-1 text-[10px] font-medium text-brand-600 cursor-pointer select-none">
+                                        <input type="checkbox" id="new-unit-price-toggle" class="rounded border-slate-300 text-brand-600 focus:ring-brand-500 w-3 h-3">
+                                        <span>Valor Unitário</span>
+                                    </label>
+                                </div>
+                                <input type="text" inputmode="numeric" autocomplete="off" data-mask="currency" id="new-total-cost" placeholder="R$ 0,00" class="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
+                            </div>
+                        </div>
+                        <div id="new-calculated-preview" class="p-2.5 bg-brand-50 border border-brand-100 rounded-lg text-xs text-brand-800 font-medium text-center hidden"></div>
                     </div>
 
-                </div>
+                    <div class="pt-4 flex items-center justify-end gap-2 border-t border-slate-100">
+                        <button type="button" onclick="closeModal('modal-new-item')" class="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg transition-all">Cancelar</button>
+                        <button type="submit" class="px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white text-xs font-semibold rounded-lg shadow-sm transition-all">Salvar Item</button>
+                    </div>
+                </form>
             </div>
         </div>
 
@@ -1058,7 +1093,7 @@
                         <span class="text-xs font-bold text-slate-500 uppercase tracking-wider block">Edição de Cadastro</span>
                         <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
                             <div class="sm:col-span-3">
-                                <label class="block text-xs font-medium text-slate-700 mb-1">Título do Item</label>
+                                <label for="edit-item-title" class="block text-xs font-medium text-slate-700 mb-1">Título do Item</label>
                                 <input type="text" id="edit-item-title" class="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-sm">
                             </div>
                             <div class="sm:col-span-2">
@@ -1410,7 +1445,7 @@ CREATE POLICY "Permite acesso a movimentos por usuario" ON public.movements FOR 
             </div>
             <form onsubmit="handleDisplayNameSubmit(event)" class="p-6 space-y-4">
                 <div>
-                    <label class="block text-xs font-semibold text-slate-700 mb-1">Nome de Perfil</label>
+                    <label for="display-name-input" class="block text-xs font-semibold text-slate-700 mb-1">Nome de Perfil</label>
                     <input type="text" id="display-name-input" required placeholder="Ex: João Silva" class="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
                 </div>
                 <div class="pt-2 flex justify-end">
