@@ -1,0 +1,8 @@
+﻿Backup/
+graphify-out/
+Leitor de lote/
+*.txt
+*.rar
+*.zip
+.env
+.env.*

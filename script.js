@@ -1,0 +1,5141 @@
+async function loadHomeDashboard() {
+    if (!supabaseClient || !currentUser) return;
+    const salesBody = document.getElementById('recent-sales-body');
+    const movementsBody = document.getElementById('recent-activity-body');
+    const productionBody = document.getElementById('recent-production-body');
+    if (!salesBody || !movementsBody || !productionBody) return;
+
+    [salesBody, movementsBody, productionBody].forEach(body => body.replaceChildren());
+    const [salesResult, movementsResult, productionResult] = await Promise.all([
+        supabaseClient.from('vendas')
+            .select('id, titulo, created_at, valor_venda')
+            .eq('user_id', currentUser.id)
+            .order('created_at', { ascending: false })
+            .limit(5),
+        supabaseClient.from('historico')
+            .select('created_at, item_id, tipo, quantidade')
+            .eq('user_id', currentUser.id)
+            .order('created_at', { ascending: false })
+            .limit(8),
+        supabaseClient.from('ordens_producao')
+            .select('created_at, status, receita_id')
+            .eq('user_id', currentUser.id)
+            .order('created_at', { ascending: false })
+            .limit(5)
+    ]);
+
+    const errors = [];
+    [
+        [salesResult.error, 'vendas recentes'],
+        [movementsResult.error, 'movimentações de estoque'],
+        [productionResult.error, 'ordens de produção recentes']
+    ].forEach(([error, label]) => {
+        if (error) {
+            console.error(`Erro ao carregar ${label}:`, error);
+            errors.push(label);
+        }
+    });
+
+    const formatDate = value => new Date(value).toLocaleString('pt-BR', {
+        day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit'
+    });
+    const emptyMessages = {
+        'recent-sales-empty': 'Nenhuma venda recente.',
+        'recent-empty': 'Nenhuma movimentação recente.',
+        'recent-production-empty': 'Nenhuma ordem de produção recente.'
+    };
+    const renderEmpty = (id, hasRows, error) => {
+        const element = document.getElementById(id);
+        if (!element) return;
+        element.classList.toggle('hidden', hasRows);
+        element.textContent = error ? 'Não foi possível carregar estes dados.' : emptyMessages[id];
+    };
+
+    const sales = salesResult.data || [];
+    sales.forEach(sale => {
+        const row = document.createElement('tr');
+        row.className = 'hover:bg-slate-50 cursor-pointer transition-colors';
+        makeSaleRowInteractive(row, sale.id);
+        row.innerHTML = `
+            <td class="px-3 py-2.5 whitespace-nowrap text-slate-500">${formatDate(sale.created_at)}</td>
+            <td class="px-3 py-2.5"><span class="block max-w-36 truncate font-medium text-slate-800">${escapeHtml(sale.titulo || 'Venda sem identificação')}</span></td>
+            <td class="px-3 py-2.5 text-right whitespace-nowrap font-semibold text-slate-800">${formatCurrency(sale.valor_venda)}</td>`;
+        salesBody.appendChild(row);
+    });
+    renderEmpty('recent-sales-empty', sales.length > 0, salesResult.error);
+
+    const movements = movementsResult.data || [];
+    movements.forEach(movement => {
+        const item = (itemsList || []).find(entry => String(entry.id) === String(movement.item_id));
+        const isEntry = movement.tipo === 'ENTRADA';
+        const typeLabel = isEntry ? 'Entrada' : 'Saída';
+        const badgeClass = isEntry ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700';
+        const row = document.createElement('tr');
+        row.innerHTML = `
+            <td class="px-3 py-2.5 whitespace-nowrap text-slate-500">${formatDate(movement.created_at)}</td>
+            <td class="px-3 py-2.5"><span class="block max-w-32 truncate font-medium text-slate-800">${escapeHtml(item ? item.titulo : 'Item removido')}</span></td>
+            <td class="px-3 py-2.5 text-right whitespace-nowrap"><span class="font-medium text-slate-700">${Number(movement.quantidade || 0).toLocaleString('pt-BR')} ${escapeHtml(item ? item.unidade || '' : '')}</span><span class="ml-1.5 rounded px-1.5 py-0.5 text-[10px] font-semibold ${badgeClass}">${typeLabel}</span></td>`;
+        movementsBody.appendChild(row);
+    });
+    renderEmpty('recent-empty', movements.length > 0, movementsResult.error);
+
+    const orders = productionResult.data || [];
+    orders.forEach(order => {
+        const recipe = (recipesList || []).find(entry => String(entry.id) === String(order.receita_id));
+        const statusLabels = {
+            EM_ANDAMENTO: ['Em andamento', 'bg-amber-50 text-amber-700'],
+            CONCLUIDA: ['Concluída', 'bg-emerald-50 text-emerald-700'],
+            CANCELADA: ['Cancelada', 'bg-slate-100 text-slate-600']
+        };
+        const [statusLabel, statusClass] = statusLabels[order.status] || ['—', 'bg-slate-100 text-slate-600'];
+        const row = document.createElement('tr');
+        row.innerHTML = `
+            <td class="px-3 py-2.5 whitespace-nowrap text-slate-500">${formatDate(order.created_at)}</td>
+            <td class="px-3 py-2.5"><span class="block max-w-36 truncate font-medium text-slate-800">${escapeHtml(recipe ? recipe.nome : 'Receita removida')}</span></td>
+            <td class="px-3 py-2.5 text-right whitespace-nowrap"><span class="rounded px-1.5 py-0.5 text-[10px] font-semibold ${statusClass}">${statusLabel}</span></td>`;
+        productionBody.appendChild(row);
+    });
+    renderEmpty('recent-production-empty', orders.length > 0, productionResult.error);
+
+    if (errors.length) showToast('Não foi possível carregar: ' + errors.join(', ') + '.', 'error');
+    if (window.lucide) lucide.createIcons();
+}
+
+// ===== Menu lateral (hambúrguer no mobile) =====
+function openSidebar() {
+    const sb = document.getElementById('sidebar');
+    const ov = document.getElementById('sidebar-overlay');
+    const btn = document.getElementById('menu-toggle');
+    if (!sb) return;
+    sb.classList.add('sidebar-open');
+    if (ov) ov.classList.add('sidebar-overlay-open');
+    if (btn) { btn.setAttribute('aria-expanded', 'true'); btn.setAttribute('aria-label', 'Fechar menu'); }
+    document.body.style.overflow = 'hidden';
+}
+
+function closeSidebar() {
+    const sb = document.getElementById('sidebar');
+    const ov = document.getElementById('sidebar-overlay');
+    const btn = document.getElementById('menu-toggle');
+    if (sb) sb.classList.remove('sidebar-open');
+    if (ov) ov.classList.remove('sidebar-overlay-open');
+    if (btn) { btn.setAttribute('aria-expanded', 'false'); btn.setAttribute('aria-label', 'Abrir menu'); }
+    document.body.style.overflow = '';
+}
+
+function toggleSidebar() {
+    const sb = document.getElementById('sidebar');
+    if (sb && sb.classList.contains('sidebar-open')) closeSidebar();
+    else openSidebar();
+}
+
+const desktopSidebarMedia = window.matchMedia('(min-width: 1024px)');
+const desktopSidebar = document.getElementById('sidebar');
+if (desktopSidebar) {
+    const updateDesktopSidebar = expanded => {
+        const isExpanded = desktopSidebarMedia.matches && expanded;
+        desktopSidebar.classList.toggle('sidebar-expanded', isExpanded);
+        if (!desktopSidebarMedia.matches) {
+            desktopSidebar.style.removeProperty('width');
+            desktopSidebar.querySelectorAll('.sidebar-expand-label').forEach(label => {
+                ['max-width', 'opacity', 'transform'].forEach(property => label.style.removeProperty(property));
+            });
+            desktopSidebar.querySelectorAll('nav button, :scope > div:last-child button').forEach(button => {
+                ['justify-content', 'padding-left', 'padding-right'].forEach(property => button.style.removeProperty(property));
+            });
+            desktopSidebar.querySelectorAll(':scope > div:first-child, :scope > div:last-child').forEach(section => {
+                ['padding-left', 'padding-right'].forEach(property => section.style.removeProperty(property));
+            });
+            return;
+        }
+
+        desktopSidebar.style.setProperty('width', isExpanded ? '16rem' : '5rem', 'important');
+        desktopSidebar.querySelectorAll('.sidebar-expand-label').forEach(label => {
+            label.style.setProperty('max-width', isExpanded ? '12rem' : '0', 'important');
+            label.style.setProperty('opacity', isExpanded ? '1' : '0', 'important');
+            label.style.setProperty('transform', isExpanded ? 'translateX(0)' : 'translateX(-.5rem)', 'important');
+        });
+        desktopSidebar.querySelectorAll('nav button, :scope > div:last-child button').forEach(button => {
+            button.style.setProperty('justify-content', isExpanded ? 'flex-start' : 'center', 'important');
+            button.style.setProperty('padding-left', isExpanded ? '1rem' : '0', 'important');
+            button.style.setProperty('padding-right', isExpanded ? '1rem' : '0', 'important');
+        });
+        const header = desktopSidebar.querySelector(':scope > div:first-child');
+        const footer = desktopSidebar.querySelector(':scope > div:last-child');
+        if (header) {
+            header.style.setProperty('padding-left', isExpanded ? '1.5rem' : '.5rem', 'important');
+            header.style.setProperty('padding-right', isExpanded ? '1.5rem' : '.5rem', 'important');
+        }
+        if (footer) {
+            footer.style.setProperty('padding-left', isExpanded ? '1rem' : '.75rem', 'important');
+            footer.style.setProperty('padding-right', isExpanded ? '1rem' : '.75rem', 'important');
+        }
+    };
+    desktopSidebar.addEventListener('mouseenter', () => updateDesktopSidebar(true));
+    desktopSidebar.addEventListener('mouseleave', () => updateDesktopSidebar(desktopSidebar.contains(document.activeElement)));
+    desktopSidebar.addEventListener('focusin', () => updateDesktopSidebar(true));
+    desktopSidebar.addEventListener('focusout', event => {
+        updateDesktopSidebar(desktopSidebar.contains(event.relatedTarget) || desktopSidebar.matches(':hover'));
+    });
+    desktopSidebarMedia.addEventListener('change', event => {
+        updateDesktopSidebar(event.matches && (desktopSidebar.matches(':hover') || desktopSidebar.contains(document.activeElement)));
+    });
+}
+
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeSidebar();
+});
+
+// Ao aumentar a tela para desktop, garante que o estado do menu mobile seja limpo
+window.matchMedia('(min-width: 1024px)').addEventListener('change', (e) => {
+    if (e.matches) closeSidebar();
+});
+
+// ===== Edição de cadastro (lápis abre/fecha com animação) =====
+function setEditSection(open) {
+    const sec = document.getElementById('edit-section');
+    const btn = document.getElementById('edit-toggle');
+    if (!sec) return;
+    sec.classList.toggle('edit-open', !!open);
+    sec.setAttribute('aria-hidden', open ? 'false' : 'true');
+    if (btn) {
+        btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+        btn.title = open ? 'Fechar edição' : 'Editar cadastro';
+    }
+    if (open) {
+        setTimeout(() => {
+            const input = document.getElementById('edit-item-title');
+            if (input) input.focus({ preventScroll: true });
+        }, 250);
+    }
+}
+
+function toggleEditSection() {
+    const sec = document.getElementById('edit-section');
+    setEditSection(!(sec && sec.classList.contains('edit-open')));
+}
+
+// ===== Máscaras automáticas dos campos (quantidade e valor em R$) =====
+// Moeda: digita só números e o campo vira "R$ 1.234,56" (os dois últimos dígitos são os centavos).
+function maskCurrency(raw) {
+    let digits = String(raw || '').replace(/\D/g, '').slice(0, 12);
+    digits = digits.replace(/^0+/, '');
+    if (!digits) return '';
+    const cents = parseInt(digits, 10);
+    return 'R$ ' + (cents / 100).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// Quantidade: vírgula separa os decimais (até 3 casas) e o ponto separa os milhares: "1.500,75"
+function maskQuantity(raw, inputType) {
+    let v = String(raw || '').replace(/[^\d,.]/g, '');
+    const isPaste = inputType === 'insertFromPaste' || inputType === 'insertFromDrop';
+    if (!v.includes(',')) {
+        if (isPaste) {
+            // colou "10.5" ou "1234.567"? um único ponto que não separa grupos de 3 dígitos é decimal
+            const parts = v.split('.');
+            if (parts.length === 2 && parts[1].length !== 3) v = parts[0] + ',' + parts[1];
+        } else if (v.endsWith('.')) {
+            // teclado numérico que só tem ponto: o ponto digitado no fim vira vírgula
+            v = v.slice(0, -1) + ',';
+        }
+    }
+    v = v.replace(/\./g, '');
+    const commaIdx = v.indexOf(',');
+    const hasComma = commaIdx !== -1;
+    let intPart = (hasComma ? v.slice(0, commaIdx) : v).replace(/\D/g, '').slice(0, 9).replace(/^0+(?=\d)/, '');
+    const decPart = hasComma ? v.slice(commaIdx + 1).replace(/\D/g, '').slice(0, 3) : '';
+    if (!intPart && !hasComma) return '';
+    if (!intPart) intPart = '0';
+    return intPart.replace(/\B(?=(\d{3})+(?!\d))/g, '.') + (hasComma ? ',' + decPart : '');
+}
+
+// Converte o texto formatado de volta para número
+function parseCurrencyInput(str) {
+    const digits = String(str || '').replace(/\D/g, '');
+    return digits ? parseInt(digits, 10) / 100 : 0;
+}
+
+function parseQuantityInput(str) {
+    const n = parseFloat(String(str || '').replace(/\./g, '').replace(',', '.'));
+    return isNaN(n) ? 0 : n;
+}
+
+function applyInputMask(el, inputType) {
+    const old = el.value;
+    const caret = el.selectionStart == null ? old.length : el.selectionStart;
+    const formatted = el.dataset.mask === 'currency' ? maskCurrency(old) : maskQuantity(old, inputType);
+    if (formatted === old) return;
+    const significantBefore = old.slice(0, caret).replace(/[^\d,]/g, '').length;
+    const atEnd = caret >= old.length;
+    el.value = formatted;
+    let pos = formatted.length;
+    if (el.dataset.mask !== 'currency' && !atEnd) {
+        // mantém o cursor no mesmo ponto ao editar no meio do número
+        let count = 0;
+        pos = 0;
+        while (pos < formatted.length && count < significantBefore) {
+            if (/[\d,]/.test(formatted[pos])) count++;
+            pos++;
+        }
+    }
+    try { el.setSelectionRange(pos, pos); } catch (e) {}
+}
+
+document.addEventListener('input', (e) => {
+    const el = e.target;
+    if (el && el.dataset && el.dataset.mask) applyInputMask(el, e.inputType);
+});
+
+// ===== Seletor Entrada / Saída =====
+function setMovType(type) {
+    const t = type === 'OUT' ? 'OUT' : 'IN';
+    const hidden = document.getElementById('mov-type');
+    if (hidden) hidden.value = t;
+    const seg = document.getElementById('mov-seg');
+    if (seg) seg.setAttribute('data-type', t);
+    const card = document.getElementById('mov-card');
+    if (card) card.setAttribute('data-type', t);
+    document.querySelectorAll('.mov-seg-btn').forEach(b => {
+        b.setAttribute('aria-checked', String(b.getAttribute('data-type') === t));
+    });
+    const label = document.getElementById('mov-submit-label');
+    if (label) label.textContent = t === 'IN' ? 'Registrar Entrada' : 'Registrar Saída';
+    toggleMovCostField();
+    updateMovPreview();
+}
+
+// Valor financeiro de uma saída: quantidade × custo médio atual (sem digitação de preço)
+function calcExitTotal(qty, avgCost) {
+    return (Number(qty) || 0) * (Number(avgCost) || 0);
+}
+
+// Mostra uma prévia do resultado antes de registrar (bom para conferir no celular)
+function updateMovPreview() {
+    const box = document.getElementById('mov-preview');
+    if (!box) return;
+    const item = itemsList.find(i => String(i.id) === String(currentItemId));
+    const type = (document.getElementById('mov-type') || {}).value || 'IN';
+    const qty = parseQuantityInput((document.getElementById('mov-qty') || {}).value);
+    if (!item || qty <= 0) {
+        box.classList.add('hidden');
+        return;
+    }
+    const un = item.unidade || '';
+    const saldo = Number(item.quantidade) || 0;
+    const fmt = (n) => Number(n).toLocaleString('pt-BR') + ' ' + un;
+    const base = 'text-xs font-medium rounded-lg px-3 py-2 border ';
+    let text, cls;
+    if (type === 'IN') {
+        const raw = parseCurrencyInput((document.getElementById('mov-total-price') || {}).value);
+        const isUnitPrice = !!(document.getElementById('mov-unit-price-toggle') || {}).checked;
+        const total = calcEntryTotal(qty, raw, un, isUnitPrice);
+        text = (total > 0
+                    ? (isUnitPrice ? 'Total calculado: ' + formatCurrency(total) + ' · ' : '') +
+                      'Custo desta entrada: ' + formatUnitCost(total / qty) + ' / ' + un.toLowerCase() + ' · '
+                    : '') +
+               'Novo saldo: ' + fmt(saldo + qty);
+        cls = 'bg-emerald-50 text-emerald-800 border-emerald-200';
+    } else if (qty > saldo) {
+        text = 'Estoque insuficiente: saldo atual é ' + fmt(saldo);
+        cls = 'bg-rose-100 text-rose-800 border-rose-300';
+    } else {
+        // Saída: o valor financeiro é sempre calculado automaticamente pelo custo médio atual
+        const avgCost = Number(item.custo_medio) || 0;
+        text = 'Valor baixado do estoque: ' + formatCurrency(calcExitTotal(qty, avgCost)) +
+               ' (calculado via custo médio de ' + formatUnitCost(avgCost) + ' / ' + un.toLowerCase() + ')' +
+               ' · Novo saldo: ' + fmt(saldo - qty);
+        cls = 'bg-rose-50 text-rose-800 border-rose-200';
+    }
+    box.className = base + cls;
+    box.textContent = text;
+}
+
+document.addEventListener('input', (e) => {
+    if (e.target && (e.target.id === 'mov-qty' || e.target.id === 'mov-total-price')) updateMovPreview();
+});
+
+document.addEventListener('change', (e) => {
+    if (e.target && e.target.id === 'mov-unit-price-toggle') {
+        updateMovPriceLabel();
+        updateMovPreview();
+    }
+});
+
+function showSection(section) {
+    closeSidebar();
+    const home = document.getElementById('sec-home');
+    const estoque = document.getElementById('sec-estoque');
+    const receitas = document.getElementById('sec-receitas');
+    const relatorio = document.getElementById('sec-relatorio');
+    const relatorioVendas = document.getElementById('sec-relatorio-vendas');
+    const ordensProducao = document.getElementById('sec-ordens-producao');
+    const vendas = document.getElementById('sec-vendas');
+
+    [home, estoque, receitas, relatorio, relatorioVendas, ordensProducao, vendas].forEach(sec => {
+        if (sec) {
+            sec.classList.remove('active');
+            sec.style.display = 'none';
+        }
+    });
+
+    const show = section === 'home' ? home
+        : section === 'relatorio' ? relatorio
+        : section === 'relatorio-vendas' ? relatorioVendas
+        : section === 'receitas' ? receitas
+        : section === 'ordens-producao' ? ordensProducao
+        : section === 'vendas' ? vendas
+        : estoque;
+
+    if (show) {
+        show.style.display = 'block';
+        void show.offsetWidth;
+        requestAnimationFrame(() => {
+            show.classList.add('active');
+        });
+    }
+
+    if (section === 'home') {
+        loadHomeDashboard();
+    } else if (section === 'relatorio') {
+        loadRelatorio();
+    } else if (section === 'relatorio-vendas') {
+        loadSalesReport();
+    } else if (section === 'ordens-producao') {
+        loadOrdensProducaoView();
+    } else if (section === 'vendas') {
+        loadSalesHistory();
+    } else if (section === 'receitas') {
+        renderRecipes();
+        renderProductionOrders();
+        updateProductionRecipeOptions();
+    } else {
+        renderItems();
+    }
+}
+
+
+// Configuration Supabase pré-configurada
+const SUPABASE_URL = "https://qcziixqumhcmlrmqnpec.supabase.co";
+const SUPABASE_KEY = "sb_publishable_WLQdhQL9Em2-DMTmSoBOyg_-W6YHEkH";
+
+// Login por Supabase Auth. Se o usuário digitar só o nome (ex.: "admin"),
+// este domínio é acrescentado (admin@estoque.invalid). Deve ser o mesmo
+// domínio usado ao criar o usuário no painel do Supabase.
+const AUTH_EMAIL_DOMAIN = 'estoque.invalid';
+
+let supabaseClient = null;
+let currentUser = null;
+let itemsList = [];
+let currentStockTypeFilter = 'ALL';
+
+// ===== Categorias de item =====
+// Valores gravados na coluna "categoria" da tabela "itens" (itens antigos ficam com NULL)
+const ITEM_CATEGORIES = {
+    INGREDIENTE: 'Ingrediente',
+    EMBALAGEM: 'Embalagem',
+    PRODUTO_PRONTO: 'Produto Pronto'
+};
+// Botão de filtro da tela de estoque -> categoria
+const STOCK_FILTER_TO_CATEGORY = {
+    INGREDIENT: 'INGREDIENTE',
+    PACKAGING: 'EMBALAGEM',
+    FINISHED: 'PRODUTO_PRONTO'
+};
+
+function normalizeCategory(value) {
+    const key = String(value || '').trim().toUpperCase();
+    return Object.prototype.hasOwnProperty.call(ITEM_CATEGORIES, key) ? key : null;
+}
+
+function getCategoryLabel(value) {
+    const key = normalizeCategory(value);
+    return key ? ITEM_CATEGORIES[key] : '';
+}
+
+let relatorioData = [];
+let relatorioSortCol = null;
+let relatorioSortDir = 'desc'; // 'desc' ou 'asc'
+let currentItemId = null;
+let recipesList = [];
+let editingRecipeId = null;
+let recipeSaving = false;
+let productionSaving = false;
+let saleSaving = false;
+let productionOrdersList = [];
+let productionOrdersLoading = false;
+let salesReportData = [];
+let activeSaleDetailsId = null;
+let saleTitleSaving = false;
+let pendingManualExitDecisionResolver = null;
+const recipeIngredientCreations = new Map();
+const recipeAutocomplete = { el: null, input: null, active: -1 };
+
+function openModal(id) {
+    const modal = document.getElementById(id);
+    if (!modal) return;
+    modal.classList.remove('hidden');
+    // force reflow
+    void modal.offsetWidth;
+    requestAnimationFrame(() => {
+        modal.classList.add('modal-open');
+    });
+    if (window.lucide) lucide.createIcons();
+}
+
+function closeModal(id) {
+    const modal = document.getElementById(id);
+    if (!modal) return;
+    modal.classList.remove('modal-open');
+    setTimeout(() => {
+        modal.classList.add('hidden');
+    }, 200);
+}
+
+// Total real de uma entrada. Valor unitário: GR/ML referem-se a KG/Litro (÷1000); UN é direto.
+function calcEntryTotal(qty, rawValue, unit, isUnitPrice) {
+    if (!isUnitPrice) return rawValue;
+    const u = String(unit || '').toUpperCase();
+    return (u === 'GR' || u === 'ML') ? (qty / 1000) * rawValue : qty * rawValue;
+}
+
+// Rótulo do campo de valor na janela de movimentação do item
+function updateMovPriceLabel() {
+    const toggle = document.getElementById('mov-unit-price-toggle');
+    const label = document.getElementById('mov-price-label');
+    if (label) label.textContent = (toggle && toggle.checked) ? 'Valor Unitário (R$)' : 'Valor Total Pago (R$)';
+}
+
+function toggleMovCostField() {
+    const isEntrada = (document.getElementById('mov-type') || {}).value === 'IN';
+    const container = document.getElementById('mov-cost-container');
+    const input = document.getElementById('mov-total-price');
+
+    if (container) {
+        container.classList.toggle('mov-cost-hidden', !isEntrada);
+        container.setAttribute('aria-hidden', isEntrada ? 'false' : 'true');
+        // Na saída o campo some de vez (inclui o seletor "Valor Unitário"): o operador só digita a quantidade
+        container.style.display = isEntrada ? '' : 'none';
+    }
+
+    if (isEntrada) {
+        if (input) {
+            input.disabled = false;
+            input.readOnly = false;
+        }
+    } else {
+        if (input) {
+            input.value = '';
+            input.disabled = true;
+            input.readOnly = true;
+        }
+        const unitToggle = document.getElementById('mov-unit-price-toggle');
+        if (unitToggle) unitToggle.checked = false;
+    }
+    updateMovPriceLabel();
+}
+try {
+    if (window.supabase) {
+        supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    }
+} catch (e) {
+    console.error("Erro ao inicializar Supabase:", e);
+}
+
+function buildCurrentUser(authUser) {
+    const meta = (authUser && authUser.user_metadata) || {};
+    const email = authUser.email || '';
+    return {
+        id: authUser.id,
+        email: email,
+        username: email.split('@')[0] || authUser.id,
+        display_name: meta.display_name || null
+    };
+}
+
+function normalizeLoginEmail(raw) {
+    const value = String(raw || '').trim().toLowerCase();
+    return value.includes('@') ? value : value + '@' + AUTH_EMAIL_DOMAIN;
+}
+
+function showAuthScreen() {
+    const dash = document.getElementById('main-dashboard');
+    const auth = document.getElementById('auth-screen');
+    if (dash) dash.classList.add('hidden');
+    if (auth) auth.classList.remove('hidden');
+    const authUser = document.getElementById('auth-username');
+    const authPass = document.getElementById('auth-password');
+    if (authUser) authUser.value = '';
+    if (authPass) authPass.value = '';
+}
+
+(async function initSession() {
+    if (!supabaseClient) return;
+    try {
+        const { data } = await supabaseClient.auth.getSession();
+        if (data && data.session && data.session.user) {
+            currentUser = buildCurrentUser(data.session.user);
+            await renderDashboard();
+        }
+    } catch (e) {
+        console.error(e);
+    }
+    // Sessão encerrada fora do botão "Sair" (token expirado, outra aba etc.)
+    supabaseClient.auth.onAuthStateChange((event) => {
+        if (event === 'SIGNED_OUT' && currentUser) {
+            currentUser = null;
+            showAuthScreen();
+            showToast('Sessão expirada. Entre novamente.', 'info');
+        }
+    });
+})();
+
+async function handleAuthSubmit(event) {
+    event.preventDefault();
+    const rawUser = document.getElementById('auth-username').value;
+    const password = document.getElementById('auth-password').value;
+    const submitBtn = document.getElementById('auth-submit-btn');
+
+    if (!rawUser.trim() || !password) {
+        showToast('Preencha usuário e senha.', 'error');
+        return;
+    }
+
+    if (!supabaseClient) {
+        showToast('Supabase não disponível.', 'error');
+        return;
+    }
+
+    if (submitBtn) submitBtn.disabled = true;
+    try {
+        const { data, error } = await supabaseClient.auth.signInWithPassword({
+            email: normalizeLoginEmail(rawUser),
+            password: password
+        });
+        if (error || !data || !data.user) {
+            const invalid = !error || /invalid login credentials/i.test(error.message || '');
+            showToast(invalid ? 'Credenciais inválidas.' : 'Erro de autenticação: ' + error.message, 'error');
+            return;
+        }
+        currentUser = buildCurrentUser(data.user);
+    } catch (err) {
+        console.error(err);
+        showToast('Erro de autenticação: ' + (err && err.message ? err.message : err), 'error');
+        return;
+    } finally {
+        if (submitBtn) submitBtn.disabled = false;
+    }
+
+    showToast('Bem-vindo, ' + (currentUser.display_name || currentUser.username) + '!', 'success');
+    const authUser = document.getElementById('auth-username');
+    const authPass = document.getElementById('auth-password');
+    if (authUser) authUser.value = '';
+    if (authPass) authPass.value = '';
+    try {
+        await renderDashboard();
+    } catch (e) {
+        console.error(e);
+        showToast('Erro ao abrir painel: ' + (e && e.message ? e.message : e), 'error');
+    }
+}
+
+async function logout() {
+    closeSidebar();
+    currentUser = null;
+    try {
+        if (supabaseClient) await supabaseClient.auth.signOut();
+    } catch (e) {
+        console.error(e);
+    }
+    showAuthScreen();
+    showToast('Sessão encerrada.', 'info');
+}
+function getDisplayName() {
+    if (!currentUser) return '';
+    return currentUser.display_name || '';
+}
+
+function updateDisplayNameUI() {
+    const el = document.getElementById('user-display-name');
+    if (!el || !currentUser) return;
+    const name = getDisplayName();
+    el.textContent = name || currentUser.email || currentUser.id;
+}
+
+async function checkDisplayName() {
+    if (!currentUser) return;
+    if (supabaseClient) {
+        try {
+            const { data } = await supabaseClient.auth.getUser();
+            const meta = data && data.user && data.user.user_metadata;
+            if (meta && meta.display_name) {
+                currentUser.display_name = meta.display_name;
+            }
+        } catch (e) { console.error(e); }
+    }
+    const name = currentUser.display_name;
+    if (!name) {
+        const modal = document.getElementById('modal-display-name');
+        const input = document.getElementById('display-name-input');
+        if (input) input.value = '';
+        if (modal) openModal('modal-display-name');
+        if (window.lucide) lucide.createIcons();
+    } else {
+        updateDisplayNameUI();
+    }
+}
+
+async function handleDisplayNameSubmit(event) {
+    event.preventDefault();
+    const input = document.getElementById('display-name-input');
+    const name = input ? input.value.trim() : '';
+    if (!name) {
+        showToast('Informe um nome.', 'error');
+        return;
+    }
+    if (!supabaseClient || !currentUser) {
+        showToast('Supabase não disponível.', 'error');
+        return;
+    }
+    try {
+        const { error } = await supabaseClient.auth.updateUser({ data: { display_name: name } });
+        if (error) throw error;
+        currentUser.display_name = name;
+        updateDisplayNameUI();
+        const modal = document.getElementById('modal-display-name');
+        if (modal) closeModal('modal-display-name');
+        if (input) input.value = '';
+        showToast('Nome de perfil salvo.', 'success');
+    } catch (e) {
+        console.error(e);
+        showToast('Erro ao salvar nome: ' + (e && e.message ? e.message : e), 'error');
+    }
+}
+
+
+async function renderDashboard() {
+    if (!currentUser) return;
+    document.getElementById('auth-screen').classList.add('hidden');
+    document.getElementById('main-dashboard').classList.remove('hidden');
+    document.getElementById('user-display-name').textContent = currentUser.display_name || currentUser.username || currentUser.id;
+    updateDisplayNameUI();
+    try {
+        await loadItems();
+    } catch (e) {
+        console.error(e);
+        showToast('Erro ao carregar itens: ' + (e && e.message ? e.message : e), 'error');
+    }
+    await loadRecipes();
+    await loadProductionOrders();
+    await loadHomeDashboard();
+    showSection('home');
+    await checkDisplayName();
+}
+
+async function loadItems() {
+    if (!supabaseClient || !currentUser) {
+        showToast('Supabase não disponível.', 'error');
+        return;
+    }
+    try {
+        const { data, error } = await supabaseClient
+            .from('itens')
+            .select('*')
+            .eq('user_id', currentUser.id)
+            .order('created_at', { ascending: false });
+        if (error) throw error;
+        
+        // Garante que os campos numéricos vêm tratados e nunca vazios/undefined
+        itemsList = (data || []).map(i => ({
+            ...i,
+            categoria: normalizeCategory(i.categoria),
+            quantidade: Number(i.quantidade) || 0,
+            custo_medio: Number(i.custo_medio) || 0,
+            status: i.status === 'COM MOVIMENTAÇÕES' ? 'ATIVO NO ESTOQUE' : (i.status || (Number(i.quantidade) > 0 ? 'ATIVO NO ESTOQUE' : 'SEM MOVIMENTAÇÕES'))
+        }));
+    } catch (err) {
+        console.error('Erro ao carregar itens:', err);
+        showToast('Erro ao carregar itens: ' + (err && err.message ? err.message : err), 'error');
+        itemsList = [];
+    }
+    renderItems();
+    updateStats();
+    populateItemsDatalist();
+}
+
+async function loadRecipes() {
+    recipesList = [];
+    if (!supabaseClient || !currentUser) {
+        renderRecipes();
+        return;
+    }
+
+    try {
+        const { data: recipes, error: recipeError } = await supabaseClient
+            .from('receitas')
+            .select('id, user_id, nome, rendimento, created_at')
+            .eq('user_id', currentUser.id)
+            .order('nome', { ascending: true });
+        if (recipeError) throw recipeError;
+
+        const recipeIds = (recipes || []).map(recipe => recipe.id);
+        let recipeItems = [];
+        if (recipeIds.length > 0) {
+            const { data, error } = await supabaseClient
+                .from('receita_itens')
+                .select('id, receita_id, item_id, quantidade')
+                .eq('user_id', currentUser.id)
+                .in('receita_id', recipeIds);
+            if (error) throw error;
+            recipeItems = data || [];
+        }
+
+        recipesList = (recipes || []).map(recipe => ({
+            ...recipe,
+            rendimento: Number(recipe.rendimento) || 1,
+            itens: recipeItems
+                .filter(row => String(row.receita_id) === String(recipe.id))
+                .map(row => ({
+                    ...row,
+                    quantidade: Number(row.quantidade) || 0,
+                    item: itemsList.find(item => String(item.id) === String(row.item_id)) || null
+                }))
+        }));
+        renderRecipes();
+        renderItems();
+    } catch (error) {
+        console.error('Erro ao carregar receitas:', error);
+        renderRecipes();
+        renderItems();
+        showToast('Erro ao carregar receitas. Aplique supabase_data/05_receitas_producao.sql no Supabase, se ainda não o fez: ' + (error && error.message ? error.message : error), 'error');
+    }
+}
+
+function getSaleProducts() {
+    return (itemsList || []).filter(item =>
+        normalizeCategory(item.categoria) === 'PRODUTO_PRONTO' &&
+        Number(item.quantidade) > 0 &&
+        item.status !== 'CADASTRO PENDENTE'
+    );
+}
+
+function getSaleAdditionalItems() {
+    return (itemsList || []).filter(item =>
+        ['INGREDIENTE', 'EMBALAGEM'].includes(normalizeCategory(item.categoria)) &&
+        Number(item.quantidade) > 0 &&
+        item.status !== 'CADASTRO PENDENTE'
+    );
+}
+
+function buildSaleItemOptions(items, placeholder) {
+    return `<option value="">${placeholder}</option>` + items.map(item =>
+        `<option value="${escapeHtml(item.id)}">${escapeHtml(item.titulo)} · ${Number(item.quantidade).toLocaleString('pt-BR')} ${escapeHtml(item.unidade || '')}</option>`
+    ).join('');
+}
+
+function openSaleModal(itemId = null, quantity = null) {
+    const lines = document.getElementById('sale-lines');
+    if (!lines) return;
+    lines.replaceChildren();
+    const title = document.getElementById('sale-title');
+    if (title) title.value = '';
+    addSaleLine();
+    if (itemId !== null) {
+        const firstLine = lines.querySelector('.sale-line');
+        const product = firstLine && firstLine.querySelector('.sale-product');
+        const amount = firstLine && firstLine.querySelector('.sale-quantity');
+        if (product) product.value = String(itemId);
+        if (amount && quantity !== null) amount.value = String(quantity);
+    }
+    openModal('modal-venda');
+    updateSaleSummary();
+}
+
+function requestManualExitDecision() {
+    const confirmation = document.getElementById('manual-exit-confirmation');
+    const reasonForm = document.getElementById('manual-exit-reason-form');
+    const reasonInput = document.getElementById('manual-exit-reason');
+    const error = document.getElementById('manual-exit-reason-error');
+    if (!confirmation || !reasonForm || !reasonInput || !error) {
+        throw new Error('O formulário de decisão da saída manual não está disponível.');
+    }
+    if (pendingManualExitDecisionResolver) {
+        throw new Error('Já existe uma decisão de saída manual aguardando resposta.');
+    }
+    confirmation.classList.remove('hidden');
+    reasonForm.classList.add('hidden');
+    reasonInput.value = '';
+    error.textContent = '';
+    error.classList.add('hidden');
+    openModal('modal-manual-exit-decision');
+    return new Promise(resolve => {
+        pendingManualExitDecisionResolver = resolve;
+    });
+}
+
+function finishManualExitDecision(result) {
+    const resolve = pendingManualExitDecisionResolver;
+    if (!resolve) return;
+    pendingManualExitDecisionResolver = null;
+    closeModal('modal-manual-exit-decision');
+    resolve(result);
+}
+
+function confirmManualExitSale() {
+    finishManualExitDecision({ type: 'sale' });
+}
+
+function showManualExitReason() {
+    const confirmation = document.getElementById('manual-exit-confirmation');
+    const reasonForm = document.getElementById('manual-exit-reason-form');
+    const reasonInput = document.getElementById('manual-exit-reason');
+    if (!confirmation || !reasonForm || !reasonInput) return;
+    confirmation.classList.add('hidden');
+    reasonForm.classList.remove('hidden');
+    reasonInput.focus();
+}
+
+function confirmManualExitAsStock() {
+    const reasonInput = document.getElementById('manual-exit-reason');
+    const error = document.getElementById('manual-exit-reason-error');
+    if (!reasonInput || !error) return;
+    const reason = reasonInput.value.trim();
+    if (!reason || reason.length > 25) {
+        error.textContent = !reason
+            ? 'Informe uma justificativa para registrar a saída.'
+            : 'A justificativa deve ter no máximo 25 caracteres.';
+        error.classList.remove('hidden');
+        reasonInput.focus();
+        return;
+    }
+    finishManualExitDecision({ type: 'stock', reason });
+}
+
+function cancelManualExitDecision() {
+    finishManualExitDecision({ type: 'cancel' });
+}
+
+function addSaleLine() {
+    const container = document.getElementById('sale-lines');
+    if (!container) return;
+    const products = getSaleProducts();
+    const row = document.createElement('article');
+    row.className = 'sale-line rounded-xl border border-slate-200 bg-white p-3 sm:p-4 space-y-3';
+    row.innerHTML = `
+        <div class="grid grid-cols-2 sm:grid-cols-[minmax(0,1fr)_6rem_9rem_2.5rem] gap-2 items-end">
+            <div class="col-span-2 sm:col-span-1 min-w-0">
+                <label class="block text-[10px] font-semibold uppercase tracking-wide text-slate-500 mb-1">Produto pronto</label>
+                <select class="sale-product w-full h-10 px-2.5 bg-white border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">${buildSaleItemOptions(products, 'Selecione...')}</select>
+            </div>
+            <div>
+                <label class="block text-[10px] font-semibold uppercase tracking-wide text-slate-500 mb-1">Quantidade</label>
+                <input type="number" min="1" max="2147483647" step="1" inputmode="numeric" class="sale-quantity w-full h-10 px-2.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" placeholder="1">
+            </div>
+            <div>
+                <label class="block text-[10px] font-semibold uppercase tracking-wide text-slate-500 mb-1">Preço por unidade</label>
+                <input type="text" inputmode="numeric" autocomplete="off" data-mask="currency" class="sale-price w-full h-10 px-2.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" placeholder="R$ 0,00">
+            </div>
+            <button type="button" class="sale-remove-line h-10 w-10 justify-self-end flex items-center justify-center text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg" aria-label="Remover produto">
+                <i data-lucide="trash-2" class="w-4 h-4"></i>
+            </button>
+        </div>
+        <div class="border-t border-slate-100 pt-3">
+            <div class="flex items-center justify-between gap-2 mb-2">
+                <div>
+                    <h5 class="text-xs font-semibold text-slate-700">Adicionais por unidade</h5>
+                    <p class="text-[10px] text-slate-500">A quantidade informada será multiplicada pelas unidades vendidas.</p>
+                </div>
+                <button type="button" class="sale-add-extra shrink-0 px-2.5 py-1.5 text-[11px] font-semibold text-brand-700 bg-brand-50 hover:bg-brand-100 border border-brand-200 rounded-lg">+ Adicionar</button>
+            </div>
+            <div class="sale-additional-rows space-y-2"></div>
+        </div>`;
+    container.appendChild(row);
+    const noProducts = document.getElementById('sale-no-products');
+    if (noProducts) noProducts.classList.toggle('hidden', products.length > 0);
+    if (window.lucide) lucide.createIcons();
+    updateSaleSummary();
+}
+
+function addSaleAdditional(button) {
+    const line = button.closest('.sale-line');
+    const container = line && line.querySelector('.sale-additional-rows');
+    if (!container) return;
+    const row = document.createElement('div');
+    row.className = 'sale-additional-row grid grid-cols-[minmax(0,1fr)_6rem_2.5rem] gap-2 items-end';
+    row.innerHTML = `
+        <div class="min-w-0">
+            <label class="block text-[10px] font-semibold uppercase tracking-wide text-slate-500 mb-1">Embalagem / ingrediente</label>
+            <select class="sale-extra-item w-full h-9 px-2 bg-white border border-slate-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-brand-500">${buildSaleItemOptions(getSaleAdditionalItems(), 'Sem adicional')}</select>
+        </div>
+        <div>
+            <label class="block text-[10px] font-semibold uppercase tracking-wide text-slate-500 mb-1">Qtd. / unidade</label>
+            <input type="text" inputmode="decimal" autocomplete="off" data-mask="quantity" class="sale-extra-quantity w-full h-9 px-2 border border-slate-300 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-brand-500" placeholder="1">
+        </div>
+        <button type="button" class="sale-remove-extra h-9 w-9 justify-self-end flex items-center justify-center text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg" aria-label="Remover adicional">
+            <i data-lucide="x" class="w-4 h-4"></i>
+        </button>`;
+    container.appendChild(row);
+    if (window.lucide) lucide.createIcons();
+    updateSaleSummary();
+}
+
+function collectSaleForm() {
+    const lines = Array.from(document.querySelectorAll('#sale-lines .sale-line'));
+    const entries = [];
+    const requiredStock = new Map();
+    let totalCost = 0;
+    let totalRevenue = 0;
+    let validationMessage = '';
+    const titleInput = document.getElementById('sale-title');
+    const title = titleInput ? titleInput.value.trim().replace(/\s+/g, ' ') : '';
+    const setError = message => { if (!validationMessage) validationMessage = message; };
+    const addRequirement = (item, quantity) => {
+        const key = String(item.id);
+        const current = requiredStock.get(key) || { item, quantity: 0 };
+        current.quantity += quantity;
+        requiredStock.set(key, current);
+    };
+
+    lines.forEach((line, lineIndex) => {
+        const productId = line.querySelector('.sale-product').value;
+        const quantityInput = line.querySelector('.sale-quantity');
+        const priceInput = line.querySelector('.sale-price');
+        const additionalRows = Array.from(line.querySelectorAll('.sale-additional-row'));
+        const hasAdditional = additionalRows.some(row =>
+            row.querySelector('.sale-extra-item').value || row.querySelector('.sale-extra-quantity').value.trim()
+        );
+        if (!productId && !quantityInput.value && !priceInput.value && !hasAdditional) return;
+
+        const product = getSaleProducts().find(item => String(item.id) === String(productId));
+        if (!product) {
+            setError(`Selecione um produto pronto na linha ${lineIndex + 1}.`);
+            return;
+        }
+
+        const quantity = Number(quantityInput.value);
+        if (!Number.isSafeInteger(quantity) || quantity <= 0 || quantity > 2147483647) {
+            setError(`Informe uma quantidade inteira maior que zero para ${product.titulo}.`);
+            return;
+        }
+        const unitPrice = parseCurrencyInput(priceInput.value);
+        if (unitPrice <= 0) setError(`Informe o preço de venda por unidade para ${product.titulo}.`);
+
+        const additionalEntries = [];
+        let lineAdditionalCost = 0;
+        additionalRows.forEach((extraRow, extraIndex) => {
+            const extraId = extraRow.querySelector('.sale-extra-item').value;
+            const extraQuantityInput = extraRow.querySelector('.sale-extra-quantity');
+            const rawQuantity = extraQuantityInput.value.trim();
+            if (!extraId && !rawQuantity) return;
+            const extraItem = getSaleAdditionalItems().find(item => String(item.id) === String(extraId));
+            const perUnitQuantity = parseQuantityInput(rawQuantity);
+            if (!extraItem) {
+                setError(`Selecione um adicional válido na linha ${lineIndex + 1}, adicional ${extraIndex + 1}.`);
+                return;
+            }
+            if (perUnitQuantity <= 0) {
+                setError(`Informe a quantidade por unidade para ${extraItem.titulo}.`);
+                return;
+            }
+            const totalQuantity = perUnitQuantity * quantity;
+            addRequirement(extraItem, totalQuantity);
+            lineAdditionalCost += totalQuantity * (Number(extraItem.custo_medio) || 0);
+            additionalEntries.push({
+                item_id: extraItem.id,
+                quantidade_por_unidade: perUnitQuantity
+            });
+        });
+
+        addRequirement(product, quantity);
+        const productCost = quantity * (Number(product.custo_medio) || 0);
+        totalCost += productCost + lineAdditionalCost;
+        totalRevenue += quantity * unitPrice;
+        entries.push({
+            item_id: product.id,
+            quantidade: quantity,
+            valor_unitario: unitPrice,
+            adicionais: additionalEntries
+        });
+    });
+
+    requiredStock.forEach(({ item, quantity }) => {
+        if (quantity > (Number(item.quantidade) || 0) + 1e-9) {
+            setError(`Estoque insuficiente de ${item.titulo}: disponível ${Number(item.quantidade).toLocaleString('pt-BR')} ${item.unidade || ''}; necessário ${quantity.toLocaleString('pt-BR')} ${item.unidade || ''}.`);
+        }
+    });
+    if (!entries.length && !validationMessage) setError('Adicione ao menos um produto à venda.');
+    if (!title) setError('Informe o título ou a identificação da venda.');
+    return { title, entries, totalCost, totalRevenue, validationMessage };
+}
+
+function updateSaleSummary() {
+    const form = collectSaleForm();
+    const profit = form.totalRevenue - form.totalCost;
+    const margin = form.totalRevenue > 0 ? (profit / form.totalRevenue) * 100 : 0;
+    const costEl = document.getElementById('sale-total-cost');
+    const revenueEl = document.getElementById('sale-total-revenue');
+    const profitEl = document.getElementById('sale-total-profit');
+    const marginEl = document.getElementById('sale-total-margin');
+    const messageEl = document.getElementById('sale-validation-message');
+    const submit = document.getElementById('sale-submit');
+    if (costEl) costEl.textContent = formatCurrency(form.totalCost);
+    if (revenueEl) revenueEl.textContent = formatCurrency(form.totalRevenue);
+    if (profitEl) {
+        profitEl.textContent = formatCurrency(profit);
+        profitEl.classList.toggle('text-rose-700', profit < 0);
+        profitEl.classList.toggle('text-emerald-700', profit >= 0);
+    }
+    if (marginEl) marginEl.textContent = `${margin.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
+    if (messageEl) {
+        messageEl.textContent = form.validationMessage;
+        messageEl.classList.toggle('hidden', !form.validationMessage);
+    }
+    if (submit) submit.disabled = saleSaving || !!form.validationMessage || !form.entries.length;
+}
+
+function makeSaleRowInteractive(row, saleId) {
+    row.classList.add('cursor-pointer', 'hover:bg-brand-50/60');
+    row.tabIndex = 0;
+    row.setAttribute('role', 'button');
+    row.setAttribute('aria-label', 'Abrir detalhes da venda');
+    row.title = 'Abrir detalhes da venda';
+    row.onclick = () => openSaleDetails(saleId);
+    row.onkeydown = event => {
+        if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            openSaleDetails(saleId);
+        }
+    };
+}
+
+async function finalizeSale() {
+    if (saleSaving) return;
+    if (!supabaseClient || !currentUser) {
+        showToast('Supabase não disponível.', 'error');
+        return;
+    }
+    const form = collectSaleForm();
+    if (form.validationMessage || !form.entries.length) {
+        updateSaleSummary();
+        showToast(form.validationMessage || 'Adicione ao menos um produto à venda.', 'error');
+        return;
+    }
+
+    saleSaving = true;
+    const button = document.getElementById('sale-submit');
+    const label = document.getElementById('sale-submit-label');
+    if (button) button.disabled = true;
+    if (label) label.textContent = 'Registrando...';
+    try {
+        const { error } = await supabaseClient.rpc('registrar_venda', {
+            p_user_id: currentUser.id,
+            p_titulo: form.title,
+            p_itens: form.entries
+        });
+        if (error) throw error;
+
+        closeModal('modal-venda');
+        await loadItems();
+        await loadHomeDashboard();
+        await loadSalesHistory();
+        showToast('Venda registrada e estoque atualizado com sucesso.', 'success');
+    } catch (error) {
+        console.error('Erro ao registrar venda:', error);
+        showToast('Erro ao registrar venda: ' + (error && error.message ? error.message : error), 'error');
+    } finally {
+        saleSaving = false;
+        if (label) label.textContent = 'Finalizar venda';
+        updateSaleSummary();
+    }
+}
+
+async function loadSalesHistory() {
+    const tbody = document.getElementById('sales-history-body');
+    const empty = document.getElementById('sales-history-empty');
+    if (!tbody) return;
+    tbody.replaceChildren();
+    if (empty) empty.textContent = 'Nenhuma venda registrada.';
+    if (!supabaseClient || !currentUser) {
+        showToast('Supabase não disponível.', 'error');
+        return;
+    }
+    try {
+        const { data, error } = await supabaseClient
+            .from('vendas')
+            .select('id, titulo, created_at, quantidade_itens, valor_custo, valor_venda, lucro, margem_percentual')
+            .eq('user_id', currentUser.id)
+            .order('created_at', { ascending: false })
+            .limit(100);
+        if (error) throw error;
+        const sales = data || [];
+        if (empty) empty.classList.toggle('hidden', sales.length > 0);
+        sales.forEach(sale => {
+            const date = new Date(sale.created_at).toLocaleString('pt-BR', {
+                day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
+            });
+            const tr = document.createElement('tr');
+            makeSaleRowInteractive(tr, sale.id);
+            tr.innerHTML = `
+                <td class="px-4 sm:px-6 py-3 whitespace-nowrap"><span class="block font-semibold text-slate-800">${escapeHtml(sale.titulo || 'Venda sem identificação')}</span><span class="block text-[10px] text-slate-500">${date}</span><span class="font-mono text-[10px] text-slate-400">#${escapeHtml(String(sale.id).slice(0, 8))}</span></td>
+                <td class="px-4 py-3 text-right">${Number(sale.quantidade_itens || 0).toLocaleString('pt-BR')}</td>
+                <td class="px-4 py-3 text-right whitespace-nowrap">${formatCurrency(sale.valor_custo)}</td>
+                <td class="px-4 py-3 text-right whitespace-nowrap font-semibold">${formatCurrency(sale.valor_venda)}</td>
+                <td class="px-4 py-3 text-right whitespace-nowrap font-semibold ${Number(sale.lucro) < 0 ? 'text-rose-700' : 'text-emerald-700'}">${formatCurrency(sale.lucro)}</td>
+                <td class="px-4 sm:px-6 py-3 text-right whitespace-nowrap">${Number(sale.margem_percentual || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%</td>`;
+            tbody.appendChild(tr);
+        });
+    } catch (error) {
+        console.error('Erro ao carregar histórico de vendas:', error);
+        if (empty) {
+            empty.classList.remove('hidden');
+            empty.textContent = 'Não foi possível carregar as vendas. Aplique supabase_data/09_registro_venda.sql no Supabase e tente novamente.';
+        }
+    }
+}
+
+async function openSaleDetails(saleId) {
+    if (!supabaseClient || !currentUser) {
+        showToast('Supabase não disponível.', 'error');
+        return;
+    }
+    const tbody = document.getElementById('sale-details-items');
+    if (!tbody) return;
+    tbody.replaceChildren();
+    activeSaleDetailsId = null;
+    const titleInput = document.getElementById('sale-details-title-input');
+    const saveTitleButton = document.getElementById('sale-details-save-title');
+    if (titleInput) titleInput.value = '';
+    if (saveTitleButton) saveTitleButton.disabled = true;
+    setSaleTitleEditMode(false);
+    const empty = document.getElementById('sale-details-empty');
+    if (empty) empty.classList.add('hidden');
+    try {
+        const { data: sale, error: saleError } = await supabaseClient
+            .from('vendas')
+            .select('id, titulo, created_at, quantidade_itens, valor_custo, valor_venda, lucro, margem_percentual')
+            .eq('id', saleId)
+            .eq('user_id', currentUser.id)
+            .single();
+        if (saleError) throw saleError;
+
+        const { data: items, error: itemsError } = await supabaseClient
+            .from('venda_itens')
+            .select('id, item_nome, quantidade, valor_unitario, custo_unitario, custo_adicionais, valor_total, custo_total')
+            .eq('venda_id', sale.id)
+            .eq('user_id', currentUser.id)
+            .order('created_at', { ascending: true });
+        if (itemsError) throw itemsError;
+
+        const saleItems = items || [];
+        let additionalRows = [];
+        if (saleItems.length) {
+            const { data, error } = await supabaseClient
+                .from('venda_adicionais')
+                .select('venda_item_id, item_nome, quantidade_por_unidade, quantidade_total, custo_unitario, custo_total')
+                .eq('user_id', currentUser.id)
+                .in('venda_item_id', saleItems.map(item => item.id));
+            if (error) throw error;
+            additionalRows = data || [];
+        }
+
+        const date = new Date(sale.created_at).toLocaleString('pt-BR', {
+            day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
+        });
+        activeSaleDetailsId = sale.id;
+        const saleTitle = sale.titulo || 'Venda sem identificação';
+        document.getElementById('sale-details-title').textContent = saleTitle;
+        if (titleInput) titleInput.value = saleTitle;
+        if (saveTitleButton) saveTitleButton.disabled = false;
+        document.getElementById('sale-details-date').textContent = `${date} · Venda #${String(sale.id).slice(0, 8)}`;
+        document.getElementById('sale-details-cost').textContent = formatCurrency(sale.valor_custo);
+        document.getElementById('sale-details-revenue').textContent = formatCurrency(sale.valor_venda);
+        document.getElementById('sale-details-profit').textContent = formatCurrency(sale.lucro);
+        document.getElementById('sale-details-margin').textContent = `${Number(sale.margem_percentual || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
+
+        saleItems.forEach(item => {
+            const tr = document.createElement('tr');
+            const extras = additionalRows.filter(extra => String(extra.venda_item_id) === String(item.id));
+            const additionalMarkup = extras.map(extra =>
+                `<span class="block mt-1 pl-3 text-[11px] font-normal text-slate-500">+ ${escapeHtml(extra.item_nome)} · ${Number(extra.quantidade_total).toLocaleString('pt-BR')} (${formatCurrency(extra.custo_total)})</span>`
+            ).join('');
+            const profit = Number(item.valor_total) - Number(item.custo_total);
+            tr.innerHTML = `
+                <td class="px-4 py-3"><span class="font-semibold text-slate-800">${escapeHtml(item.item_nome)}</span>${additionalMarkup}<span class="block mt-1 text-[10px] text-slate-400">Custo produto ${formatCurrency(Number(item.quantidade) * Number(item.custo_unitario))} · adicionais ${formatCurrency(item.custo_adicionais)}</span></td>
+                <td class="px-4 py-3 text-right whitespace-nowrap">${Number(item.quantidade).toLocaleString('pt-BR')}</td>
+                <td class="px-4 py-3 text-right whitespace-nowrap">${formatCurrency(item.valor_total)}<span class="block text-[10px] text-slate-400">${formatCurrency(item.valor_unitario)} / un.</span></td>
+                <td class="px-4 py-3 text-right whitespace-nowrap">${formatCurrency(item.custo_total)}</td>
+                <td class="px-4 py-3 text-right whitespace-nowrap font-semibold ${profit < 0 ? 'text-rose-700' : 'text-emerald-700'}">${formatCurrency(profit)}</td>`;
+            tbody.appendChild(tr);
+        });
+        if (empty) empty.classList.toggle('hidden', saleItems.length > 0);
+        openModal('modal-venda-detalhes');
+    } catch (error) {
+        console.error('Erro ao carregar detalhes da venda:', error);
+        showToast('Não foi possível carregar os detalhes: ' + (error && error.message ? error.message : error), 'error');
+    }
+}
+
+function setSaleTitleEditMode(editing) {
+    const title = document.getElementById('sale-details-title');
+    const input = document.getElementById('sale-details-title-input');
+    const editButton = document.getElementById('sale-details-edit-title');
+    const cancelButton = document.getElementById('sale-details-cancel-title');
+    const saveButton = document.getElementById('sale-details-save-title');
+    if (title) title.classList.toggle('hidden', editing);
+    if (input) input.classList.toggle('hidden', !editing);
+    if (editButton) editButton.classList.toggle('hidden', editing);
+    if (cancelButton) cancelButton.classList.toggle('hidden', !editing);
+    if (saveButton) saveButton.classList.toggle('hidden', !editing);
+}
+
+function startSaleTitleEdit() {
+    if (!activeSaleDetailsId) return;
+    setSaleTitleEditMode(true);
+    const input = document.getElementById('sale-details-title-input');
+    if (input) {
+        input.focus();
+        input.select();
+    }
+}
+
+function cancelSaleTitleEdit() {
+    const input = document.getElementById('sale-details-title-input');
+    const title = document.getElementById('sale-details-title');
+    if (input && title) input.value = title.textContent;
+    setSaleTitleEditMode(false);
+}
+
+function handleSaleTitleKeydown(event) {
+    if (event.key === 'Enter') {
+        event.preventDefault();
+        saveSaleTitle();
+    } else if (event.key === 'Escape') {
+        event.preventDefault();
+        cancelSaleTitleEdit();
+    }
+}
+
+async function saveSaleTitle() {
+    if (saleTitleSaving) return;
+    if (!supabaseClient || !currentUser || !activeSaleDetailsId) {
+        showToast('Não foi possível identificar a venda para atualizar.', 'error');
+        return;
+    }
+
+    const input = document.getElementById('sale-details-title-input');
+    const button = document.getElementById('sale-details-save-title');
+    const titleDisplay = document.getElementById('sale-details-title');
+    const saleId = activeSaleDetailsId;
+    const title = input ? input.value.trim().replace(/\s+/g, ' ') : '';
+    if (!title || title.length > 120) {
+        showToast('Informe um título de até 120 caracteres.', 'error');
+        if (input) input.focus();
+        return;
+    }
+
+    saleTitleSaving = true;
+    if (button) button.disabled = true;
+    if (input) input.disabled = true;
+    try {
+        const { data, error } = await supabaseClient
+            .from('vendas')
+            .update({ titulo: title })
+            .eq('id', saleId)
+            .eq('user_id', currentUser.id)
+            .select('id, titulo')
+            .single();
+        if (error) throw error;
+
+        if (String(activeSaleDetailsId) === String(saleId)) {
+            if (input) input.value = data.titulo;
+            if (titleDisplay) titleDisplay.textContent = data.titulo;
+            setSaleTitleEditMode(false);
+        }
+        const reportHasSale = salesReportData.some(sale => String(sale.id) === String(data.id));
+        if (reportHasSale) await loadSalesReport();
+        await loadSalesHistory();
+        showToast('Identificação da venda atualizada.', 'success');
+    } catch (error) {
+        console.error('Erro ao atualizar título da venda:', error);
+        showToast('Não foi possível atualizar o título: ' + (error && error.message ? error.message : error), 'error');
+    } finally {
+        saleTitleSaving = false;
+        if (String(activeSaleDetailsId) === String(saleId)) {
+            if (button) button.disabled = false;
+            if (input) input.disabled = false;
+        }
+    }
+}
+
+async function loadSalesReport() {
+    const tbody = document.getElementById('sales-report-body');
+    const empty = document.getElementById('sales-report-empty');
+    const errorEl = document.getElementById('sales-report-error');
+    if (!tbody) return;
+    tbody.replaceChildren();
+    if (empty) empty.classList.add('hidden');
+    if (errorEl) {
+        errorEl.textContent = '';
+        errorEl.classList.add('hidden');
+    }
+    salesReportData = [];
+    document.getElementById('sales-report-revenue').textContent = formatCurrency(0);
+    document.getElementById('sales-report-profit').textContent = formatCurrency(0);
+    document.getElementById('sales-report-count').textContent = '0';
+    if (!supabaseClient || !currentUser) {
+        showToast('Supabase não disponível.', 'error');
+        return;
+    }
+
+    const startValue = (document.getElementById('sales-report-start') || {}).value || '';
+    const endValue = (document.getElementById('sales-report-end') || {}).value || '';
+    const titleValue = ((document.getElementById('sales-report-title') || {}).value || '').trim();
+    if (startValue && endValue && startValue > endValue) {
+        const message = 'A data inicial deve ser anterior ou igual à data final.';
+        if (empty) {
+            empty.textContent = 'Nenhuma venda encontrada para os filtros informados.';
+            empty.classList.remove('hidden');
+        }
+        if (errorEl) {
+            errorEl.textContent = message;
+            errorEl.classList.remove('hidden');
+        }
+        return;
+    }
+
+    try {
+        const sales = [];
+        const searchPattern = titleValue ? `%${titleValue.replace(/[%_\\]/g, '\\$&')}%` : '';
+        let lowerBound = null;
+        let upperBound = null;
+        if (startValue) lowerBound = new Date(`${startValue}T00:00:00`);
+        if (endValue) {
+            upperBound = new Date(`${endValue}T00:00:00`);
+            upperBound.setDate(upperBound.getDate() + 1);
+        }
+
+        for (let offset = 0; ; offset += 1000) {
+            let query = supabaseClient
+                .from('vendas')
+                .select('id, titulo, created_at, quantidade_itens, valor_custo, valor_venda, lucro, margem_percentual')
+                .eq('user_id', currentUser.id)
+                .order('created_at', { ascending: false });
+            if (lowerBound) query = query.gte('created_at', lowerBound.toISOString());
+            if (upperBound) query = query.lt('created_at', upperBound.toISOString());
+            if (searchPattern) query = query.ilike('titulo', searchPattern);
+            const { data, error } = await query.range(offset, offset + 999);
+            if (error) throw error;
+            const page = data || [];
+            sales.push(...page);
+            if (page.length < 1000) break;
+        }
+
+        salesReportData = sales;
+        const revenue = sales.reduce((sum, sale) => sum + (Number(sale.valor_venda) || 0), 0);
+        const profit = sales.reduce((sum, sale) => sum + (Number(sale.lucro) || 0), 0);
+        document.getElementById('sales-report-revenue').textContent = formatCurrency(revenue);
+        document.getElementById('sales-report-profit').textContent = formatCurrency(profit);
+        document.getElementById('sales-report-count').textContent = sales.length.toLocaleString('pt-BR');
+        if (empty) empty.classList.toggle('hidden', sales.length > 0);
+        sales.forEach(sale => {
+            const date = new Date(sale.created_at).toLocaleString('pt-BR', {
+                day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
+            });
+            const tr = document.createElement('tr');
+            makeSaleRowInteractive(tr, sale.id);
+            tr.innerHTML = `
+                <td class="px-4 sm:px-6 py-3"><span class="block font-semibold text-slate-800">${escapeHtml(sale.titulo || 'Venda sem identificação')}</span><span class="text-[10px] text-slate-500">${date}</span></td>
+                <td class="px-4 py-3 text-right">${Number(sale.quantidade_itens || 0).toLocaleString('pt-BR')}</td>
+                <td class="px-4 py-3 text-right whitespace-nowrap">${formatCurrency(sale.valor_custo)}</td>
+                <td class="px-4 py-3 text-right whitespace-nowrap font-semibold">${formatCurrency(sale.valor_venda)}</td>
+                <td class="px-4 py-3 text-right whitespace-nowrap font-semibold ${Number(sale.lucro) < 0 ? 'text-rose-700' : 'text-emerald-700'}">${formatCurrency(sale.lucro)}</td>
+                <td class="px-4 sm:px-6 py-3 text-right whitespace-nowrap">${Number(sale.margem_percentual || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%</td>`;
+            tbody.appendChild(tr);
+        });
+    } catch (error) {
+        console.error('Erro ao carregar relatório de vendas:', error);
+        if (errorEl) {
+            errorEl.textContent = 'Não foi possível carregar o relatório. Confirme se supabase_data/09_registro_venda.sql foi executado no Supabase.';
+            errorEl.classList.remove('hidden');
+        }
+        showToast('Erro ao carregar relatório de vendas: ' + (error && error.message ? error.message : error), 'error');
+    }
+}
+
+function clearSalesReportFilters() {
+    ['sales-report-start', 'sales-report-end', 'sales-report-title'].forEach(id => {
+        const input = document.getElementById(id);
+        if (input) input.value = '';
+    });
+    loadSalesReport();
+}
+
+function exportSalesReportCSV() {
+    if (!salesReportData.length) {
+        showToast('Não há vendas para exportar com os filtros atuais.', 'info');
+        return;
+    }
+    const header = ['Data/Hora', 'Título / Cliente', 'ID da Venda', 'Quantidade de Itens', 'Custo Total', 'Faturamento', 'Lucro', 'Margem (%)'];
+    const rows = salesReportData.map(sale => [
+        new Date(sale.created_at).toLocaleString('pt-BR'),
+        sale.titulo || 'Venda sem identificação',
+        sale.id,
+        Number(sale.quantidade_itens || 0),
+        Number(sale.valor_custo || 0).toFixed(2).replace('.', ','),
+        Number(sale.valor_venda || 0).toFixed(2).replace('.', ','),
+        Number(sale.lucro || 0).toFixed(2).replace('.', ','),
+        Number(sale.margem_percentual || 0).toFixed(2).replace('.', ',')
+    ]);
+    const csv = [header, ...rows]
+        .map(row => row.map(value => {
+            let text = String(value);
+            if (/^[=+\-@]/.test(text)) text = "'" + text;
+            return `"${text.replace(/"/g, '""')}"`;
+        }).join(';'))
+        .join('\r\n');
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `relatorio-vendas-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    showToast('Relatório de vendas exportado para CSV.', 'success');
+}
+
+document.addEventListener('input', event => {
+    const target = event.target;
+    if (target && ((target.closest && target.closest('#sale-lines')) || target.id === 'sale-title')) updateSaleSummary();
+});
+document.addEventListener('change', event => {
+    const target = event.target;
+    if (!target || !target.closest || !target.closest('#sale-lines')) return;
+    updateSaleSummary();
+});
+document.addEventListener('click', event => {
+    const target = event.target.closest && event.target.closest('#sale-lines .sale-add-extra, #sale-lines .sale-remove-line, #sale-lines .sale-remove-extra');
+    if (!target) return;
+    if (target.classList.contains('sale-add-extra')) {
+        addSaleAdditional(target);
+    } else if (target.classList.contains('sale-remove-line')) {
+        const line = target.closest('.sale-line');
+        if (line) line.remove();
+    } else {
+        const row = target.closest('.sale-additional-row');
+        if (row) row.remove();
+    }
+    updateSaleSummary();
+});
+
+let currentDetailOrderId = null;
+
+// Substitua a função renderProductionOrders antiga por esta:
+function renderProductionOrders() {
+    const tbody = document.getElementById('ordens-producao-table-body');
+    const empty = document.getElementById('ordens-producao-empty');
+    const cardAndamento = document.getElementById('op-card-andamento');
+    const cardConcluidas = document.getElementById('op-card-concluidas');
+    if (tbody) tbody.innerHTML = '';
+
+    const openOrders = productionOrdersList.filter(o => String(o.status) === 'EM_ANDAMENTO');
+    const doneOrders = productionOrdersList.filter(o => String(o.status) === 'CONCLUIDA');
+    if (cardAndamento) cardAndamento.textContent = openOrders.length;
+    if (cardConcluidas) cardConcluidas.textContent = doneOrders.length;
+
+    if (!productionOrdersList.length) {
+        if (empty) empty.classList.remove('hidden');
+        return;
+    }
+    if (empty) empty.classList.add('hidden');
+
+    productionOrdersList.forEach(order => {
+        if (!tbody) return;
+        const recipe = recipesList.find(r => String(r.id) === String(order.receita_id));
+        const name = recipe ? recipe.nome : 'Receita';
+        const tr = document.createElement('tr');
+        tr.className = 'hover:bg-slate-50/80 transition-colors cursor-pointer border-b border-slate-100';
+        tr.onclick = () => openProductionOrderDetails(order.id); // Clicar na linha abre o painel detalhado
+
+        const statusClass = String(order.status) === 'EM_ANDAMENTO'
+            ? 'bg-amber-50 text-amber-700 border-amber-200'
+            : String(order.status) === 'CONCLUIDA'
+                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                : 'bg-slate-100 text-slate-600 border-slate-200';
+
+        tr.innerHTML = `
+            <td class="px-3 sm:px-6 py-3.5 font-mono text-xs text-slate-500">${String(order.id).slice(0,8)}</td>
+            <td class="px-3 sm:px-6 py-3.5 font-semibold text-slate-900">${escapeHtml(name)}</td>
+            <td class="px-3 sm:px-6 py-3.5 text-right font-medium">${Number(order.quantidade_planejada).toLocaleString('pt-BR')} UN</td>
+            <td class="px-3 sm:px-6 py-3.5 text-right font-bold text-emerald-700">${formatCurrency(order.custo_acumulado)}</td>
+            <td class="px-3 sm:px-6 py-3.5"><span class="px-2.5 py-1 border rounded-full text-[11px] font-semibold ${statusClass}">${order.status}</span></td>
+            <td class="px-3 sm:px-6 py-3.5 text-right">
+                <button type="button" onclick="event.stopPropagation(); openProductionOrderDetails('${order.id}')" class="p-1.5 text-slate-400 hover:text-brand-600 hover:bg-brand-50 rounded-lg" title="Ver detalhes">
+                    <i data-lucide="eye" class="w-4 h-4"></i>
+                </button>
+            </td>
+        `;
+        tbody.appendChild(tr);
+    });
+    if (window.lucide) window.lucide.createIcons();
+}
+
+// Adicione estas novas funções logo abaixo de renderProductionOrders:
+async function openProductionOrderDetails(orderId) {
+    const order = productionOrdersList.find(o => String(o.id) === String(orderId));
+    if (!order) return;
+    currentDetailOrderId = order.id;
+
+    const recipe = recipesList.find(r => String(r.id) === String(order.receita_id));
+    const name = recipe ? recipe.nome : 'Produto Acabado';
+
+    document.getElementById('op-modal-title').textContent = `O.P. #${String(order.id).slice(0,8)} · ${name}`;
+    document.getElementById('op-detail-planned').textContent = `${Number(order.quantidade_planejada).toLocaleString('pt-BR')} UN`;
+    document.getElementById('op-detail-cost').textContent = formatCurrency(order.custo_acumulado);
+    
+    const unitEst = order.quantidade_planejada > 0 ? (order.custo_acumulado / order.quantidade_planejada) : 0;
+    document.getElementById('op-detail-unit-cost').textContent = formatCurrency(unitEst);
+
+    const badge = document.getElementById('op-detail-status-badge');
+    badge.textContent = order.status;
+    badge.className = String(order.status) === 'EM_ANDAMENTO' 
+        ? 'inline-block mt-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200'
+        : 'inline-block mt-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200';
+
+    const isEmAndamento = String(order.status) === 'EM_ANDAMENTO';
+    document.getElementById('op-detail-action-buttons').style.display = isEmAndamento ? 'flex' : 'none';
+    document.getElementById('btn-op-close').style.display = isEmAndamento ? 'inline-flex' : 'none';
+
+    // Renderizar Insumos da Receita/Lote
+    const ingBody = document.getElementById('op-detail-ingredients-body');
+    ingBody.innerHTML = '';
+    (order.itens || []).forEach(oi => {
+        const item = itemsList.find(i => String(i.id) === String(oi.item_id));
+        const itemName = item ? item.titulo : oi.item_id;
+        const unit = item ? item.unidade : '';
+        const res = Number(oi.quantidade_reservada) || 0;
+        const lost = Number(oi.quantidade_perdida) || 0;
+        const unitCost = Number(oi.custo_unitario) || 0;
+        const subtotal = Math.max(0, res - lost) * unitCost;
+
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td class="p-3 font-semibold text-slate-800">${escapeHtml(itemName)}</td>
+            <td class="p-3 text-right">${res.toLocaleString('pt-BR')} ${unit}</td>
+            <td class="p-3 text-right text-rose-600 font-medium">${lost > 0 ? lost.toLocaleString('pt-BR') + ' ' + unit : '—'}</td>
+            <td class="p-3 text-right">${formatUnitCost(unitCost)}</td>
+            <td class="p-3 text-right font-bold text-slate-800">${formatCurrency(subtotal)}</td>
+        `;
+        ingBody.appendChild(tr);
+    });
+
+    // Carregar Histórico de Perdas do Supabase
+    const lossesBody = document.getElementById('op-detail-losses-body');
+    const noLossesMsg = document.getElementById('op-detail-no-losses');
+    lossesBody.innerHTML = '';
+    
+    if (supabaseClient && currentUser) {
+        try {
+            const { data: losses } = await supabaseClient
+                .from('ordem_perdas')
+                .select('*')
+                .eq('ordem_id', order.id)
+                .eq('user_id', currentUser.id);
+
+            if (losses && losses.length > 0) {
+                noLossesMsg.classList.add('hidden');
+                losses.forEach(p => {
+                    const item = itemsList.find(i => String(i.id) === String(p.item_id));
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `
+                        <td class="p-3 font-medium text-slate-800">${item ? escapeHtml(item.titulo) : 'Diversos'}</td>
+                        <td class="p-3 text-right">${Number(p.quantidade || 0).toLocaleString('pt-BR')} ${item ? item.unidade : ''}</td>
+                        <td class="p-3 text-right font-semibold text-rose-600">${formatCurrency(p.custo)}</td>
+                        <td class="p-3 text-slate-500">${escapeHtml(p.descricao || 'Sem descrição')}</td>
+                    `;
+                    lossesBody.appendChild(tr);
+                });
+            } else {
+                noLossesMsg.classList.remove('hidden');
+            }
+        } catch (e) {
+            console.error(e);
+            noLossesMsg.classList.remove('hidden');
+        }
+    }
+
+    openModal('modal-op-details');
+    if (window.lucide) lucide.createIcons();
+}
+
+function triggerOpLossFromDetail() {
+    closeModal('modal-op-details');
+    openLossModal(currentDetailOrderId);
+}
+
+function triggerOpCancelFromDetail() {
+    closeModal('modal-op-details');
+    cancelProductionOrderById(currentDetailOrderId);
+}
+
+function triggerOpCloseFromDetail() {
+    closeModal('modal-op-details');
+    openCloseModal(currentDetailOrderId);
+}
+
+async function loadOrdensProducaoView() {
+    await loadProductionOrders();
+    renderProductionOrders();
+}
+
+async function loadProductionOrders() {
+    productionOrdersList = [];
+    if (!supabaseClient || !currentUser) {
+        renderProductionOrders();
+        updateProductionOrderOptions();
+        return;
+    }
+    try {
+        const { data: orders, error: orderError } = await supabaseClient
+            .from('ordens_producao')
+            .select('*')
+            .eq('user_id', currentUser.id)
+            .order('created_at', { ascending: false });
+        if (orderError) throw orderError;
+        const orderIds = (orders || []).map(o => o.id);
+        let orderItems = [];
+        if (orderIds.length > 0) {
+            const { data, error } = await supabaseClient
+                .from('ordem_itens')
+                .select('*')
+                .eq('user_id', currentUser.id)
+                .in('ordem_id', orderIds);
+            if (error) throw error;
+            orderItems = data || [];
+        }
+        productionOrdersList = (orders || []).map(order => ({
+            ...order,
+            quantidade_planejada: Number(order.quantidade_planejada) || 0,
+            custo_acumulado: Number(order.custo_acumulado) || 0,
+            rendimento_real: order.rendimento_real == null ? null : Number(order.rendimento_real),
+            perdas_finais: Number(order.perdas_finais) || 0,
+            itens: orderItems
+                .filter(oi => String(oi.ordem_id) === String(order.id))
+                .map(oi => ({
+                    ...oi,
+                    quantidade_reservada: Number(oi.quantidade_reservada) || 0,
+                    quantidade_perdida: Number(oi.quantidade_perdida) || 0,
+                    custo_unitario: Number(oi.custo_unitario) || 0
+                }))
+        }));
+    } catch (error) {
+        console.error('Erro ao carregar ordens de produção:', error);
+        productionOrdersList = [];
+        showToast('Aplique supabase_data/08_ordens_producao.sql no Supabase para usar Ordens de Produção: ' + (error && error.message ? error.message : error), 'error');
+    }
+    renderProductionOrders();
+    updateProductionOrderOptions();
+}
+function renderRecipes() {
+    const tbody = document.getElementById('recipes-table-body');
+    const empty = document.getElementById('recipes-empty-state');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+    if (!recipesList.length) {
+        if (empty) empty.classList.remove('hidden');
+        updateProductionRecipeOptions();
+        return;
+    }
+    if (empty) empty.classList.add('hidden');
+
+    recipesList.forEach(recipe => {
+        const row = document.createElement('tr');
+        row.className = 'hover:bg-slate-50/80 transition-colors';
+        const recipeId = escapeHtml(recipe.id);
+        row.innerHTML = `
+            <td class="px-4 sm:px-6 py-4 font-semibold text-slate-900">${escapeHtml(recipe.nome)}</td>
+            <td class="px-4 sm:px-6 py-4 whitespace-nowrap"><span class="px-2 py-1 bg-slate-100 text-slate-600 rounded text-xs font-mono">${Number(recipe.rendimento) || 1} UN</span></td>
+            <td class="px-4 sm:px-6 py-4">
+                <div class="flex items-center justify-end gap-1.5">
+                    <button type="button" onclick="openProductionModal('${recipeId}')" class="px-2.5 py-2 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 rounded-lg text-xs font-semibold whitespace-nowrap" title="Produzir" aria-label="Produzir receita">
+                        <i data-lucide="factory" class="w-4 h-4 inline-block align-middle"></i><span class="hidden sm:inline ml-1">Produzir</span>
+                    </button>
+                    <button type="button" onclick="openRecipeDetails('${recipeId}')" class="p-2 text-slate-500 hover:text-brand-700 hover:bg-brand-50 rounded-lg" title="Visualizar composição de custos" aria-label="Visualizar detalhes e custos da receita">
+                        <i data-lucide="eye" class="w-4 h-4 inline-block align-middle"></i><span class="hidden sm:inline ml-1 text-xs font-semibold">Detalhes</span>
+                    </button>
+                    <button type="button" onclick="editRecipe('${recipeId}')" class="p-2 text-slate-500 hover:text-brand-700 hover:bg-brand-50 rounded-lg" aria-label="Editar receita">
+                        <i data-lucide="pencil" class="w-4 h-4 inline-block align-middle"></i><span class="hidden sm:inline ml-1 text-xs font-semibold">Editar</span>
+                    </button>
+                    <button type="button" onclick="deleteRecipe('${recipeId}')" class="p-2 text-slate-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg" aria-label="Excluir receita">
+                        <i data-lucide="trash-2" class="w-4 h-4 inline-block align-middle"></i><span class="hidden sm:inline ml-1 text-xs font-semibold">Excluir</span>
+                    </button>
+                </div>
+            </td>`;
+        tbody.appendChild(row);
+    });
+    updateProductionRecipeOptions();
+    if (window.lucide) lucide.createIcons();
+}
+
+function openRecipeDetails(recipeId) {
+    const recipe = recipesList.find(entry => String(entry.id) === String(recipeId));
+    if (!recipe) {
+        showToast('Receita não encontrada.', 'error');
+        return;
+    }
+
+    const recipeYield = Number(recipe.rendimento) || 1;
+    const tbody = document.getElementById('recipe-details-items');
+    const fullTbody = document.getElementById('recipe-details-full-items');
+    const empty = document.getElementById('recipe-details-empty');
+    const fullEmpty = document.getElementById('recipe-details-full-empty');
+    const missingWarning = document.getElementById('recipe-details-missing-warning');
+    const fullMissingWarning = document.getElementById('recipe-details-full-missing-warning');
+    let unitCostTotal = 0;
+    let batchCostTotal = 0;
+    let hasMissingItems = false;
+    tbody.innerHTML = '';
+    fullTbody.innerHTML = '';
+
+    const costRows = (recipe.itens || []).map(recipeItem => {
+        const item = itemsList.find(entry => String(entry.id) === String(recipeItem.item_id));
+        const unit = item ? String(item.unidade || '') : '';
+        const quantityTotal = Number(recipeItem.quantidade) || 0;
+        const quantityPerUnit = quantityTotal / recipeYield;
+        const avgUnitCost = item ? Number(item.custo_medio) || 0 : null;
+        const unitSubtotal = avgUnitCost === null ? null : quantityPerUnit * avgUnitCost;
+        const batchSubtotal = avgUnitCost === null ? null : quantityTotal * avgUnitCost;
+        if (batchSubtotal === null) {
+            hasMissingItems = true;
+        } else {
+            unitCostTotal += unitSubtotal;
+            batchCostTotal += batchSubtotal;
+        }
+        return { item, unit, quantityTotal, quantityPerUnit, avgUnitCost, unitSubtotal, batchSubtotal };
+    });
+
+    costRows.forEach(({ item, unit, quantityTotal, quantityPerUnit, avgUnitCost, unitSubtotal, batchSubtotal }) => {
+        const row = document.createElement('tr');
+        row.className = 'recipe-cost-row';
+        row.innerHTML = `
+            <td class="px-4 py-3">
+                <span class="font-semibold text-slate-800">${escapeHtml(item ? item.titulo : 'Insumo não encontrado')}</span>
+                <span class="block text-[11px] text-slate-500">${escapeHtml(item ? unit || '—' : '—')}</span>
+            </td>
+            <td class="px-4 py-3 text-right whitespace-nowrap">${quantityPerUnit.toLocaleString('pt-BR', { maximumFractionDigits: 3 })} ${escapeHtml(unit)}</td>
+            <td class="px-4 py-3 text-right whitespace-nowrap">${item ? `${formatUnitCost(avgUnitCost)}${unit ? ` / ${escapeHtml(unit.toLowerCase())}` : ''}` : '—'}</td>
+            <td class="px-4 py-3 text-right font-semibold text-slate-800 whitespace-nowrap">${unitSubtotal === null ? '—' : formatCurrency(unitSubtotal)}</td>`;
+        tbody.appendChild(row);
+
+        const fullRow = document.createElement('tr');
+        fullRow.className = 'recipe-cost-row';
+        const share = batchSubtotal === null || hasMissingItems || batchCostTotal === 0
+            ? null
+            : (batchSubtotal / batchCostTotal) * 100;
+        fullRow.innerHTML = `
+            <td class="px-4 py-3">
+                <span class="font-semibold text-slate-800">${escapeHtml(item ? item.titulo : 'Insumo não encontrado')}</span>
+                <span class="block text-[11px] text-slate-500">${escapeHtml(unit || '—')}</span>
+            </td>
+            <td class="px-4 py-3 text-right whitespace-nowrap">${quantityTotal.toLocaleString('pt-BR', { maximumFractionDigits: 3 })} ${escapeHtml(unit)}</td>
+            <td class="px-4 py-3 text-right whitespace-nowrap">${item ? `${formatUnitCost(avgUnitCost)}${unit ? ` / ${escapeHtml(unit.toLowerCase())}` : ''}` : '—'}</td>
+            <td class="px-4 py-3 text-right font-semibold text-slate-800 whitespace-nowrap">${batchSubtotal === null ? '—' : formatCurrency(batchSubtotal)}</td>
+            <td class="px-4 py-3 text-right whitespace-nowrap">
+                ${share === null
+                    ? '<span class="text-slate-400">—</span>'
+                    : `<div class="flex items-center justify-end gap-2"><span class="text-xs font-semibold">${share.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%</span><span class="h-1.5 w-16 overflow-hidden rounded-full bg-slate-100"><span class="block h-full rounded-full bg-brand-500" style="width:${Math.min(share, 100)}%"></span></span></div>`}
+            </td>`;
+        fullTbody.appendChild(fullRow);
+    });
+
+    document.getElementById('recipe-details-name').textContent = recipe.nome;
+    document.getElementById('recipe-details-yield').textContent = `Rendimento padrão: ${recipeYield.toLocaleString('pt-BR')} UN`;
+    document.getElementById('recipe-details-full-tab-label').textContent = `Receita Completa (Lote de ${recipeYield.toLocaleString('pt-BR')} UN)`;
+    document.getElementById('recipe-details-unit-cost').textContent = hasMissingItems ? 'Incompleto' : formatCurrency(unitCostTotal);
+    document.getElementById('recipe-details-batch-cost').textContent = hasMissingItems ? 'Incompleto' : formatCurrency(batchCostTotal);
+    document.getElementById('recipe-details-full-cost').textContent = hasMissingItems ? 'Incompleto' : formatCurrency(batchCostTotal);
+    document.getElementById('recipe-details-full-yield').textContent = `Lote base para ${recipeYield.toLocaleString('pt-BR')} UN`;
+    missingWarning.classList.toggle('hidden', !hasMissingItems);
+    fullMissingWarning.classList.toggle('hidden', !hasMissingItems);
+    empty.classList.toggle('hidden', costRows.length > 0);
+    fullEmpty.classList.toggle('hidden', costRows.length > 0);
+    setRecipeDetailsTab('unit');
+    openModal('modal-receita-details');
+    loadRecipeCostHistory(recipe);
+    if (window.lucide) lucide.createIcons();
+}
+
+function setRecipeDetailsTab(tab) {
+    const isFull = tab === 'full';
+    const unitTab = document.getElementById('recipe-details-tab-unit');
+    const fullTab = document.getElementById('recipe-details-tab-full');
+    const unitPanel = document.getElementById('recipe-details-panel-unit');
+    const fullPanel = document.getElementById('recipe-details-panel-full');
+    unitTab.classList.toggle('is-active', !isFull);
+    fullTab.classList.toggle('is-active', isFull);
+    unitTab.setAttribute('aria-selected', String(!isFull));
+    fullTab.setAttribute('aria-selected', String(isFull));
+    unitPanel.classList.toggle('hidden', isFull);
+    fullPanel.classList.toggle('hidden', !isFull);
+    if (window.lucide) lucide.createIcons();
+}
+
+let recipeCostHistory = [];
+let recipeCostHistoryRecipeId = null;
+let recipeCostChart = null;
+
+async function loadRecipeCostHistory(recipe) {
+    recipeCostHistoryRecipeId = String(recipe.id);
+    recipeCostHistory = [];
+    setRecipeCostChartMessage('Carregando histórico de custos...', true);
+    if (recipeCostChart) {
+        recipeCostChart.destroy();
+        recipeCostChart = null;
+    }
+
+    const recipeItems = recipe.itens || [];
+    const ingredientIds = [...new Set(recipeItems.map(row => String(row.item_id)))];
+    if (ingredientIds.length === 0) {
+        renderRecipeCostHistory(recipe, []);
+        return;
+    }
+
+    if (recipeItems.some(row => !itemsList.some(item => String(item.id) === String(row.item_id)))) {
+        renderRecipeCostHistory(recipe, [], 'O gráfico não pode ser calculado porque há insumo(s) da receita que não foram encontrados no estoque.');
+        return;
+    }
+    if (!supabaseClient || !currentUser || String(currentUser.id).startsWith('offline-')) {
+        renderRecipeCostHistory(recipe, [], 'O histórico de custos não está disponível nesta sessão.');
+        return;
+    }
+
+    try {
+        const history = [];
+        const pageSize = 1000;
+        for (let from = 0; ; from += pageSize) {
+            const { data, error } = await supabaseClient
+                .from('historico')
+                .select('item_id, tipo, quantidade, custo_unitario, created_at')
+                .eq('user_id', currentUser.id)
+                .in('item_id', ingredientIds)
+                .order('created_at', { ascending: true })
+                .range(from, from + pageSize - 1);
+            if (error) throw error;
+            history.push(...(data || []));
+            if (!data || data.length < pageSize) break;
+        }
+        if (recipeCostHistoryRecipeId !== String(recipe.id)) return;
+        recipeCostHistory = history;
+        renderRecipeCostHistory(recipe, history);
+    } catch (error) {
+        console.error('Erro ao carregar histórico de custos da receita:', error);
+        renderRecipeCostHistory(recipe, [], 'Não foi possível carregar o histórico de custos.');
+        showToast('Erro ao carregar histórico de custos da receita: ' + (error && error.message ? error.message : error), 'error');
+    }
+}
+
+function setRecipeCostChartMessage(message, visible) {
+    const messageElement = document.getElementById('recipe-cost-chart-message');
+    const chartWrap = document.getElementById('recipe-cost-chart-wrap');
+    if (!messageElement || !chartWrap) return;
+    messageElement.textContent = message || '';
+    messageElement.classList.toggle('hidden', !visible);
+    chartWrap.classList.toggle('hidden', visible);
+}
+
+function applyRecipeCostDateFilter() {
+    const recipe = recipesList.find(entry => String(entry.id) === recipeCostHistoryRecipeId);
+    if (recipe) renderRecipeCostHistory(recipe, recipeCostHistory);
+}
+
+function clearRecipeCostDateFilter() {
+    document.getElementById('recipe-cost-date-start').value = '';
+    document.getElementById('recipe-cost-date-end').value = '';
+    applyRecipeCostDateFilter();
+}
+
+function renderRecipeCostHistory(recipe, history, message = '') {
+    const startValue = document.getElementById('recipe-cost-date-start').value;
+    const endValue = document.getElementById('recipe-cost-date-end').value;
+    const minValueElement = document.getElementById('recipe-cost-min-value');
+    const maxValueElement = document.getElementById('recipe-cost-max-value');
+    const minDateElement = document.getElementById('recipe-cost-min-date');
+    const maxDateElement = document.getElementById('recipe-cost-max-date');
+    if (recipeCostChart) {
+        recipeCostChart.destroy();
+        recipeCostChart = null;
+    }
+    minValueElement.textContent = '—';
+    maxValueElement.textContent = '—';
+    minDateElement.textContent = '';
+    maxDateElement.textContent = '';
+
+    if (message) {
+        setRecipeCostChartMessage(message, true);
+        return;
+    }
+
+    const recipeItems = recipe.itens || [];
+    if (recipeItems.length === 0 || history.length === 0) {
+        setRecipeCostChartMessage('Ainda não há movimentações de insumos suficientes para exibir a evolução do custo.', true);
+        return;
+    }
+
+    const fromDate = startValue ? new Date(`${startValue}T00:00:00`) : null;
+    const toDateExclusive = endValue ? new Date(`${endValue}T00:00:00`) : null;
+    if (toDateExclusive) toDateExclusive.setDate(toDateExclusive.getDate() + 1);
+    if (fromDate && toDateExclusive && fromDate >= toDateExclusive) {
+        setRecipeCostChartMessage('A data inicial deve ser anterior ou igual à data final.', true);
+        return;
+    }
+
+    const itemCosts = new Map();
+    const points = [];
+    let index = 0;
+    const sortedHistory = history.slice().sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+    while (index < sortedHistory.length) {
+        const timestamp = new Date(sortedHistory[index].created_at).getTime();
+        const group = [];
+        while (index < sortedHistory.length && new Date(sortedHistory[index].created_at).getTime() === timestamp) {
+            group.push(sortedHistory[index]);
+            index++;
+        }
+
+        group.forEach(movement => {
+            const itemId = String(movement.item_id);
+            const quantity = Number(movement.quantidade) || 0;
+            const movementCost = Number(movement.custo_unitario) || 0;
+            const state = itemCosts.get(itemId) || { quantity: 0, averageCost: 0, initialized: false };
+            if (movement.tipo === 'ENTRADA' || movement.tipo === 'CADASTRO') {
+                const newQuantity = state.quantity + quantity;
+                state.averageCost = newQuantity > 0
+                    ? ((state.quantity * state.averageCost) + (quantity * movementCost)) / newQuantity
+                    : movementCost;
+                state.quantity = newQuantity;
+                state.initialized = true;
+            } else if (movement.tipo === 'SAIDA') {
+                state.quantity = Math.max(0, state.quantity - quantity);
+            }
+            itemCosts.set(itemId, state);
+        });
+
+        const allCostsAvailable = recipeItems.every(row => {
+            const state = itemCosts.get(String(row.item_id));
+            return state && state.initialized;
+        });
+        if (!allCostsAvailable) continue;
+
+        const unitCost = recipeItems.reduce((total, row) => {
+            const state = itemCosts.get(String(row.item_id));
+            return total + ((Number(row.quantidade) || 0) / (Number(recipe.rendimento) || 1)) * state.averageCost;
+        }, 0);
+        if ((!fromDate || timestamp >= fromDate.getTime()) &&
+            (!toDateExclusive || timestamp < toDateExclusive.getTime())) {
+            points.push({ timestamp, value: unitCost });
+        }
+    }
+
+    if (points.length === 0) {
+        setRecipeCostChartMessage('Não há dados de custo para o período selecionado.', true);
+        return;
+    }
+
+    const minimum = points.reduce((best, point) => point.value < best.value ? point : best);
+    const maximum = points.reduce((best, point) => point.value > best.value ? point : best);
+    const dateFormat = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+    minValueElement.textContent = formatCurrency(minimum.value);
+    maxValueElement.textContent = formatCurrency(maximum.value);
+    minDateElement.textContent = dateFormat.format(new Date(minimum.timestamp));
+    maxDateElement.textContent = dateFormat.format(new Date(maximum.timestamp));
+
+    const canvas = document.getElementById('recipe-cost-chart');
+    if (!window.Chart || !canvas) {
+        setRecipeCostChartMessage('Não foi possível inicializar o gráfico.', true);
+        return;
+    }
+    setRecipeCostChartMessage('', false);
+    const minimumValue = minimum.value;
+    const maximumValue = maximum.value;
+    const ctx = canvas.getContext('2d');
+    const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+    gradient.addColorStop(0, 'rgba(2, 132, 199, 0.2)');
+    gradient.addColorStop(1, 'rgba(2, 132, 199, 0.02)');
+    recipeCostChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: points.map(point => dateFormat.format(new Date(point.timestamp))),
+            datasets: [{
+                label: 'Custo de produção por unidade',
+                data: points.map(point => point.value),
+                borderColor: '#0284c7',
+                backgroundColor: gradient,
+                fill: true,
+                tension: 0.25,
+                pointRadius: points.map(point => point.value === minimumValue || point.value === maximumValue ? 5 : 2),
+                pointBackgroundColor: points.map(point => point.value === minimumValue ? '#10b981' : (point.value === maximumValue ? '#f43f5e' : '#0284c7')),
+                pointBorderColor: points.map(point => point.value === minimumValue ? '#10b981' : (point.value === maximumValue ? '#f43f5e' : '#0284c7'))
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { intersect: false, mode: 'index' },
+            plugins: {
+                legend: { display: true, labels: { color: '#64748b', font: { size: 11 } } },
+                tooltip: { callbacks: { label: context => ` Custo: ${formatCurrency(context.parsed.y)}` } }
+            },
+            scales: {
+                x: { ticks: { color: '#64748b', maxRotation: 45, minRotation: 0, autoSkip: true }, grid: { color: 'rgba(100, 116, 139, 0.1)' } },
+                y: { beginAtZero: true, ticks: { color: '#64748b', callback: value => formatCurrency(value) }, grid: { color: 'rgba(100, 116, 139, 0.1)' } }
+            }
+        }
+    });
+}
+
+function updateProductionRecipeOptions(selectedId) {
+    const select = document.getElementById('production-recipe');
+    if (!select) return;
+    const currentValue = selectedId || select.value;
+    select.innerHTML = '<option value="">Selecione uma receita...</option>' + recipesList.map(recipe =>
+        `<option value="${escapeHtml(recipe.id)}">${escapeHtml(recipe.nome)}</option>`
+    ).join('');
+    if (currentValue && recipesList.some(recipe => String(recipe.id) === String(currentValue))) {
+        select.value = currentValue;
+    }
+    select.disabled = recipesList.length === 0;
+    updateProductionPreview();
+}
+
+function openNewRecipeModal() {
+    editingRecipeId = null;
+    document.getElementById('recipe-name').value = '';
+    document.getElementById('recipe-yield').value = '1';
+    document.getElementById('recipe-modal-title').textContent = 'Nova Receita';
+    document.getElementById('recipe-submit').textContent = 'Salvar Receita';
+    document.getElementById('recipe-items').innerHTML = '';
+    document.getElementById('recipe-yield').oninput = updateRecipeItemPreviews;
+    addRecipeItemRow();
+    openModal('modal-receita');
+}
+
+function ensureRecipeAutocomplete() {
+    if (recipeAutocomplete.el) return recipeAutocomplete.el;
+    const list = document.createElement('div');
+    list.id = 'recipe-autocomplete';
+    list.className = 'recipe-autocomplete-results hidden';
+    list.setAttribute('role', 'listbox');
+    list.addEventListener('mousedown', event => {
+        event.preventDefault();
+        const option = event.target.closest('.recipe-autocomplete-option');
+        if (option) selectRecipeAutocompleteOption(option);
+    });
+    document.body.appendChild(list);
+    recipeAutocomplete.el = list;
+    return list;
+}
+
+function showRecipeAutocomplete(input) {
+    const list = ensureRecipeAutocomplete();
+    const query = normalizeName(input.value);
+    const matches = (itemsList || []).filter(item =>
+        !query || normalizeName(item.titulo).includes(query)
+    );
+    const exactItem = findItemByName(input.value);
+    const options = matches.map(item => {
+        const stock = Number(item.quantidade).toLocaleString('pt-BR');
+        const pending = item.status === 'CADASTRO PENDENTE' ? ' · Pendente' : '';
+        const details = `${escapeHtml(item.unidade)} · ${stock}${pending}`;
+        return `<button type="button" class="recipe-autocomplete-option" role="option" data-item-id="${escapeHtml(item.id)}">
+            <span class="truncate">${escapeHtml(item.titulo)}</span>
+            <span class="recipe-autocomplete-meta">${details}</span>
+        </button>`;
+    }).join('');
+    const createOption = query && !exactItem
+        ? `<button type="button" class="recipe-autocomplete-option border-t border-slate-100 text-brand-700" role="option" data-create="true">
+            <span>Cadastrar “${escapeHtml(input.value.trim())}” como novo insumo</span>
+            <span class="recipe-autocomplete-meta">Estoque zerado</span>
+        </button>`
+        : '';
+    list.innerHTML = options || createOption
+        ? options + createOption
+        : '<div class="recipe-autocomplete-empty">Nenhum insumo cadastrado.</div>';
+    recipeAutocomplete.input = input;
+    recipeAutocomplete.active = -1;
+
+    const rect = input.getBoundingClientRect();
+    list.style.left = `${rect.left}px`;
+    list.style.width = `${rect.width}px`;
+    list.style.top = `${rect.bottom + 4}px`;
+    list.classList.remove('hidden');
+    input.setAttribute('aria-expanded', 'true');
+    if (rect.bottom + 4 + list.offsetHeight > window.innerHeight - 8 && rect.top - 4 - list.offsetHeight > 8) {
+        list.style.top = `${rect.top - 4 - list.offsetHeight}px`;
+    }
+}
+
+function hideRecipeAutocomplete() {
+    if (recipeAutocomplete.el) recipeAutocomplete.el.classList.add('hidden');
+    if (recipeAutocomplete.input) recipeAutocomplete.input.setAttribute('aria-expanded', 'false');
+    recipeAutocomplete.input = null;
+    recipeAutocomplete.active = -1;
+}
+
+function selectRecipeAutocompleteOption(option) {
+    const input = recipeAutocomplete.input;
+    if (!input) return;
+    const row = input.closest('.recipe-grid');
+    const unitSelect = row.querySelector('.recipe-new-unit');
+    hideRecipeAutocomplete();
+    if (option.dataset.create === 'true') {
+        ensureRecipeIngredient(input, unitSelect).catch(error => {
+            console.error('Erro ao preparar insumo da receita:', error);
+            showToast('Não foi possível cadastrar o insumo: ' + error.message, 'error');
+        });
+        return;
+    }
+
+    const item = itemsList.find(entry => String(entry.id) === String(option.dataset.itemId));
+    if (!item) return;
+    input.value = item.titulo;
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    row.querySelector('.recipe-qty').focus({ preventScroll: true });
+}
+
+function moveRecipeAutocompleteActive(delta) {
+    const options = recipeAutocomplete.el.querySelectorAll('.recipe-autocomplete-option');
+    if (!options.length) return;
+    recipeAutocomplete.active = (recipeAutocomplete.active + delta + options.length) % options.length;
+    options.forEach((option, index) => {
+        const active = index === recipeAutocomplete.active;
+        option.classList.toggle('is-active', active);
+        option.setAttribute('aria-selected', String(active));
+    });
+    options[recipeAutocomplete.active].scrollIntoView({ block: 'nearest' });
+}
+
+function updateRecipeIngredientRow(row) {
+    if (!row) return;
+    const input = row.querySelector('.recipe-item');
+    const unitSelect = row.querySelector('.recipe-new-unit');
+    const badge = row.querySelector('.recipe-pending-badge');
+    const item = findItemByName(input.value);
+
+    input.dataset.itemId = item ? String(item.id) : '';
+    unitSelect.disabled = !!item;
+    if (item) unitSelect.value = item.unidade;
+    const pending = !!input.value.trim() && (!item || Number(item.quantidade) <= 0 || item.status === 'CADASTRO PENDENTE');
+    badge.classList.toggle('hidden', !pending);
+    updateRecipeItemPreviews();
+}
+
+async function setPendingStatusIfNeverReceived(item) {
+    if (item.status === 'CADASTRO PENDENTE') return item;
+    if (item.status === 'ATIVO NO ESTOQUE' || Number(item.quantidade) > 0) {
+        if (Number(item.quantidade) > 0) item.status = 'ATIVO NO ESTOQUE';
+        return item;
+    }
+    if (!supabaseClient || !currentUser || String(item.id).startsWith('local-')) {
+        item.status = 'CADASTRO PENDENTE';
+        return item;
+    }
+
+    const { data, error } = await supabaseClient
+        .from('historico')
+        .select('id')
+        .eq('user_id', currentUser.id)
+        .eq('item_id', item.id)
+        .eq('tipo', 'ENTRADA')
+        .limit(1);
+    if (error) throw error;
+
+    const status = data && data.length ? 'ATIVO NO ESTOQUE' : 'CADASTRO PENDENTE';
+    if (item.status !== status) {
+        const { error: updateError } = await supabaseClient
+            .from('itens')
+            .update({ status })
+            .eq('id', item.id)
+            .eq('user_id', currentUser.id);
+        if (updateError) throw updateError;
+        item.status = status;
+        renderItems();
+        updateStats();
+    }
+    return item;
+}
+
+async function ensureRecipeIngredient(input, unitSelect) {
+    const title = formatItemName(input.value);
+    if (!title) throw new Error('Informe o nome do insumo.');
+    const existing = findItemByName(title);
+    if (existing) {
+        input.value = existing.titulo;
+        input.dataset.itemId = String(existing.id);
+        unitSelect.value = existing.unidade;
+        unitSelect.disabled = true;
+        await setPendingStatusIfNeverReceived(existing);
+        updateRecipeIngredientRow(input.closest('.recipe-grid'));
+        return existing;
+    }
+    if (!supabaseClient || !currentUser) throw new Error('Supabase não disponível para cadastrar o insumo.');
+    if (!unitSelect.value) throw new Error(`Selecione a unidade do insumo "${title}".`);
+
+    const key = normalizeName(title);
+    let creation = recipeIngredientCreations.get(key);
+    if (!creation) {
+        creation = (async () => {
+            const { data, error } = await supabaseClient.from('itens').insert([{
+                id: generateId(),
+                codigo: generateItemCode(),
+                user_id: currentUser.id,
+                titulo: title,
+                unidade: unitSelect.value,
+                quantidade: 0,
+                custo_medio: 0,
+                status: 'CADASTRO PENDENTE'
+            }]).select().single();
+            if (error) throw error;
+
+            const created = normalizeItem(data);
+            itemsList.unshift(created);
+            renderItems();
+            updateStats();
+            populateItemsDatalist();
+            return created;
+        })();
+        recipeIngredientCreations.set(key, creation);
+    }
+
+    let created;
+    try {
+        created = await creation;
+    } finally {
+        if (recipeIngredientCreations.get(key) === creation) recipeIngredientCreations.delete(key);
+    }
+    input.value = created.titulo;
+    input.dataset.itemId = String(created.id);
+    unitSelect.value = created.unidade;
+    unitSelect.disabled = true;
+    updateRecipeIngredientRow(input.closest('.recipe-grid'));
+    return created;
+}
+
+function addRecipeItemRow(value) {
+    const wrap = document.getElementById('recipe-items');
+    if (!wrap) return;
+    const row = document.createElement('div');
+    row.className = 'recipe-grid items-start p-3 sm:p-0 border border-slate-200 sm:border-0 rounded-xl bg-slate-50/60 sm:bg-transparent';
+    row.innerHTML = `
+        <div class="recipe-ingredient min-w-0">
+            <label class="block sm:hidden text-[10px] font-semibold uppercase text-slate-500 mb-1">Insumo cadastrado</label>
+            <input type="text" autocomplete="off" class="recipe-item w-full h-10 px-3 bg-white border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" placeholder="Selecione ou digite um insumo" aria-label="Insumo" role="combobox" aria-autocomplete="list" aria-expanded="false">
+            <span class="recipe-pending-badge hidden" role="status">⚠️ Cadastro Pendente (Estoque Zerado)</span>
+        </div>
+        <div>
+            <label class="block sm:hidden text-[10px] font-semibold uppercase text-slate-500 mb-1">Total na receita</label>
+            <input type="text" inputmode="decimal" autocomplete="off" data-mask="quantity" class="recipe-qty w-full h-10 px-3 bg-white border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500" placeholder="Ex: 395" aria-label="Quantidade total na receita">
+        </div>
+        <div class="text-xs font-mono font-semibold text-slate-600">
+            <label class="block sm:hidden text-[10px] font-semibold uppercase text-slate-500 mb-1">Unidade</label>
+            <select class="recipe-new-unit h-10 w-full px-2 bg-white border border-slate-300 rounded-lg text-xs font-mono focus:outline-none focus:ring-2 focus:ring-brand-500" aria-label="Unidade do insumo">
+                <option value="">Selecione</option><option value="GR">GR</option><option value="UN">UN</option><option value="ML">ML</option>
+            </select>
+        </div>
+        <div class="recipe-per-unit flex h-10 items-center text-xs font-semibold text-brand-700">
+            <span class="recipe-consumption">—</span>
+        </div>
+        <button type="button" class="recipe-remove w-10 h-10 flex items-center justify-center text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg" aria-label="Remover insumo">
+            <i data-lucide="trash-2" class="w-4 h-4"></i>
+        </button>`;
+    wrap.appendChild(row);
+    const input = row.querySelector('.recipe-item');
+    const unitSelect = row.querySelector('.recipe-new-unit');
+    const qty = row.querySelector('.recipe-qty');
+    if (value) {
+        const item = itemsList.find(entry => String(entry.id) === String(value.item_id));
+        input.value = item ? item.titulo : '';
+        if (!item) input.dataset.itemId = String(value.item_id);
+        if (item) unitSelect.value = item.unidade;
+        qty.value = String(value.quantidade).replace('.', ',');
+    }
+    input.addEventListener('input', () => {
+        input.classList.remove('recipe-invalid');
+        updateRecipeIngredientRow(row);
+        showRecipeAutocomplete(input);
+    });
+    input.addEventListener('focus', () => showRecipeAutocomplete(input));
+    input.addEventListener('keydown', event => {
+        const isOpen = recipeAutocomplete.input === input && !recipeAutocomplete.el.classList.contains('hidden');
+        if (event.key === 'ArrowDown') {
+            event.preventDefault();
+            if (!isOpen) showRecipeAutocomplete(input);
+            else moveRecipeAutocompleteActive(1);
+        } else if (event.key === 'ArrowUp' && isOpen) {
+            event.preventDefault();
+            moveRecipeAutocompleteActive(-1);
+        } else if (event.key === 'Enter' && isOpen && recipeAutocomplete.active >= 0) {
+            event.preventDefault();
+            const option = recipeAutocomplete.el.querySelectorAll('.recipe-autocomplete-option')[recipeAutocomplete.active];
+            if (option) selectRecipeAutocompleteOption(option);
+        } else if (event.key === 'Escape' && isOpen) {
+            event.preventDefault();
+            hideRecipeAutocomplete();
+        }
+    });
+    input.addEventListener('blur', () => {
+        input.setAttribute('aria-expanded', 'false');
+        setTimeout(() => {
+            if (recipeAutocomplete.input === input) hideRecipeAutocomplete();
+        }, 120);
+    });
+    input.addEventListener('change', () => {
+        hideRecipeAutocomplete();
+        updateRecipeIngredientRow(row);
+        if (input.value.trim() && (findItemByName(input.value) || unitSelect.value)) ensureRecipeIngredient(input, unitSelect).catch(error => {
+            console.error('Erro ao preparar insumo da receita:', error);
+            showToast('Não foi possível cadastrar o insumo: ' + error.message, 'error');
+        });
+    });
+    unitSelect.addEventListener('change', () => {
+        updateRecipeIngredientRow(row);
+        if (input.value.trim() && !findItemByName(input.value)) ensureRecipeIngredient(input, unitSelect).catch(error => {
+            console.error('Erro ao preparar insumo da receita:', error);
+            showToast('Não foi possível cadastrar o insumo: ' + error.message, 'error');
+        });
+    });
+    qty.addEventListener('input', () => qty.classList.remove('recipe-invalid'));
+    qty.addEventListener('input', updateRecipeItemPreviews);
+    row.querySelector('.recipe-remove').addEventListener('click', () => row.remove());
+    updateRecipeIngredientRow(row);
+    updateRecipeItemPreviews();
+    if (window.lucide) lucide.createIcons();
+}
+
+function editRecipe(recipeId) {
+    const recipe = recipesList.find(entry => String(entry.id) === String(recipeId));
+    if (!recipe) {
+        showToast('Receita não encontrada.', 'error');
+        return;
+    }
+    editingRecipeId = recipe.id;
+    document.getElementById('recipe-name').value = recipe.nome;
+    document.getElementById('recipe-yield').value = String(Number(recipe.rendimento) || 1);
+    document.getElementById('recipe-yield').oninput = updateRecipeItemPreviews;
+    document.getElementById('recipe-modal-title').textContent = 'Editar Receita';
+    document.getElementById('recipe-submit').textContent = 'Salvar Alterações';
+    const wrap = document.getElementById('recipe-items');
+    wrap.innerHTML = '';
+    recipe.itens.forEach(row => addRecipeItemRow(row));
+    openModal('modal-receita');
+}
+
+function updateRecipeItemPreviews() {
+    const yieldInput = document.getElementById('recipe-yield');
+    const recipeYield = Number(yieldInput && yieldInput.value);
+    document.querySelectorAll('#recipe-items .recipe-grid').forEach(row => {
+        const quantity = parseQuantityInput(row.querySelector('.recipe-qty').value);
+        const unit = row.querySelector('.recipe-new-unit').value;
+        const preview = row.querySelector('.recipe-consumption');
+        preview.textContent = recipeYield > 0 && quantity > 0 && unit
+            ? `${(quantity / recipeYield).toLocaleString('pt-BR', { maximumFractionDigits: 3 })} ${unit}/UN`
+            : '—';
+    });
+}
+
+function collectRecipeItems() {
+    const rows = Array.from(document.querySelectorAll('#recipe-items .recipe-grid'));
+    const entries = [];
+    const seen = new Set();
+    let firstInvalid = null;
+    let message = '';
+    const flag = (field, text) => {
+        field.classList.add('recipe-invalid');
+        if (!firstInvalid) {
+            firstInvalid = field;
+            message = text;
+        }
+    };
+
+    rows.forEach((row, index) => {
+        const itemInput = row.querySelector('.recipe-item');
+        const unitSelect = row.querySelector('.recipe-new-unit');
+        const quantityInput = row.querySelector('.recipe-qty');
+        const name = formatItemName(itemInput.value);
+        const item = findItemByName(name);
+        const quantity = parseQuantityInput(quantityInput.value);
+        if (!name && !quantityInput.value.trim()) return;
+        if (!name) flag(itemInput, `Ingrediente ${index + 1}: informe o nome do insumo.`);
+        if (!quantityInput.value.trim() || quantity <= 0) flag(quantityInput, `Ingrediente ${index + 1}: informe uma quantidade maior que zero.`);
+        if (name && seen.has(normalizeName(name))) flag(itemInput, 'Cada insumo deve aparecer apenas uma vez na receita.');
+        if (name) seen.add(normalizeName(name));
+        if (name && !item && !unitSelect.value) flag(unitSelect, `Ingrediente ${index + 1}: selecione a unidade do insumo.`);
+        if (name && quantity > 0) entries.push({
+            item_id: item ? item.id : null,
+            name,
+            unit: item ? item.unidade : unitSelect.value,
+            quantidade: quantity
+        });
+    });
+    return { entries, firstInvalid, message };
+}
+
+async function saveRecipe() {
+    if (recipeSaving) return;
+    if (!supabaseClient || !currentUser) {
+        showToast('Supabase não disponível.', 'error');
+        return;
+    }
+    const nameInput = document.getElementById('recipe-name');
+    const rawName = nameInput.value.trim().replace(/\s+/g, ' ');
+    const name = formatItemName(rawName);
+    const yieldInput = document.getElementById('recipe-yield');
+    const recipeYield = Number(yieldInput.value);
+    if (!name) {
+        showToast('Informe o nome do Produto Acabado.', 'error');
+        nameInput.focus();
+        return;
+    }
+    if (!Number.isSafeInteger(recipeYield) || recipeYield <= 0 || recipeYield > 2147483647) {
+        showToast('Informe um rendimento inteiro maior que zero.', 'error');
+        yieldInput.focus();
+        return;
+    }
+    if (recipesList.some(recipe => normalizeName(recipe.nome) === normalizeName(name) && String(recipe.id) !== String(editingRecipeId))) {
+        showToast('Já existe uma receita com esse nome.', 'error');
+        nameInput.focus();
+        return;
+    }
+    const { entries, firstInvalid, message } = collectRecipeItems();
+    if (firstInvalid) {
+        showToast(message, 'error');
+        firstInvalid.focus();
+        return;
+    }
+    if (entries.length === 0) {
+        showToast('Adicione ao menos um insumo à ficha técnica.', 'error');
+        return;
+    }
+
+    recipeSaving = true;
+    const button = document.getElementById('recipe-submit');
+    const rows = document.getElementById('recipe-items');
+    const previousRecipe = recipesList.find(recipe => String(recipe.id) === String(editingRecipeId));
+    const recipeNameChanged = previousRecipe && normalizeName(previousRecipe.nome) !== normalizeName(name);
+    button.disabled = true;
+    button.textContent = 'Salvando...';
+    rows.classList.add('is-saving');
+    try {
+        for (const entry of entries) {
+            const row = Array.from(rows.querySelectorAll('.recipe-grid')).find(candidate =>
+                normalizeName(candidate.querySelector('.recipe-item').value) === normalizeName(entry.name)
+            );
+            const ingredientInput = row.querySelector('.recipe-item');
+            const unitSelect = row.querySelector('.recipe-new-unit');
+            const item = await ensureRecipeIngredient(ingredientInput, unitSelect);
+            entry.item_id = item.id;
+            entry.unit = item.unidade;
+        }
+        const { error } = await supabaseClient.rpc('salvar_receita', {
+            p_receita_id: editingRecipeId,
+            p_user_id: currentUser.id,
+            p_nome: name,
+            p_rendimento: recipeYield,
+            p_itens: entries.map(entry => ({ item_id: entry.item_id, quantidade: entry.quantidade }))
+        });
+        if (error) throw error;
+        closeModal('modal-receita');
+        await loadRecipes();
+        if (recipeNameChanged) await loadItems();
+        showToast('Receita salva com sucesso.', 'success');
+    } catch (error) {
+        console.error('Erro ao salvar receita:', error);
+        showToast('Erro ao salvar receita: ' + (error && error.message ? error.message : error), 'error');
+    } finally {
+        recipeSaving = false;
+        button.disabled = false;
+        button.textContent = editingRecipeId ? 'Salvar Alterações' : 'Salvar Receita';
+        rows.classList.remove('is-saving');
+    }
+}
+
+async function deleteRecipe(recipeId) {
+    const recipe = recipesList.find(entry => String(entry.id) === String(recipeId));
+    if (!recipe || !confirm(`Excluir a receita "${recipe.nome}"?`)) return;
+    if (!supabaseClient || !currentUser) {
+        showToast('Supabase não disponível.', 'error');
+        return;
+    }
+    try {
+        const { error } = await supabaseClient.from('receitas')
+            .delete()
+            .eq('id', recipe.id)
+            .eq('user_id', currentUser.id);
+        if (error) throw error;
+        recipesList = recipesList.filter(entry => String(entry.id) !== String(recipe.id));
+        renderRecipes();
+        renderItems();
+        showToast('Receita excluída.', 'success');
+    } catch (error) {
+        console.error('Erro ao excluir receita:', error);
+        showToast('Erro ao excluir receita: ' + (error && error.message ? error.message : error), 'error');
+    }
+}
+
+function updateProductionOrderOptions() {
+    const openOrders = productionOrdersList.filter(o => String(o.status) === 'EM_ANDAMENTO');
+    const lossSelect = document.getElementById('loss-order');
+    const closeSelect = document.getElementById('close-order');
+    [lossSelect, closeSelect].forEach(select => {
+        if (!select) return;
+        const current = select.value;
+        select.innerHTML = '<option value="">Selecione a ordem...</option>';
+        openOrders.forEach(order => {
+            const recipe = recipesList.find(r => String(r.id) === String(order.receita_id));
+            const name = recipe ? recipe.nome : 'Receita';
+            const opt = document.createElement('option');
+            opt.value = order.id;
+            opt.textContent = `${name} · ${Number(order.quantidade_planejada).toLocaleString('pt-BR')} UN`;
+            select.appendChild(opt);
+        });
+        if (current) select.value = current;
+    });
+    updateLossOrderPreview();
+}
+
+function updateLossOrderPreview() {
+    const orderId = document.getElementById('loss-order') ? document.getElementById('loss-order').value : '';
+    const itemSelect = document.getElementById('loss-item');
+    if (!itemSelect) return;
+    
+    itemSelect.innerHTML = '<option value="">Selecione o insumo...</option>';
+    const order = productionOrdersList.find(o => String(o.id) === String(orderId));
+    if (!order) return;
+    order.itens.forEach(oi => {
+        const item = itemsList.find(i => String(i.id) === String(oi.item_id));
+        const reservedRemaining = Math.max(0, (Number(oi.quantidade_reservada) || 0) - (Number(oi.quantidade_perdida) || 0));
+        const opt = document.createElement('option');
+        opt.value = oi.item_id;
+        opt.textContent = `${item ? item.titulo : oi.item_id} (reservado: ${reservedRemaining.toLocaleString('pt-BR')})`;
+        itemSelect.appendChild(opt);
+    });
+}
+
+function updateLossCostPreview() {
+    const preview = document.getElementById('loss-cost-preview');
+    const estimate = document.getElementById('loss-cost-estimate');
+    if (!preview || !estimate) return;
+
+    const orderId = document.getElementById('loss-order')?.value || '';
+    const itemId = document.getElementById('loss-item')?.value || '';
+    const quantity = Number(document.getElementById('loss-quantity')?.value);
+    const order = productionOrdersList.find(o => String(o.id) === String(orderId));
+    const orderItem = order?.itens.find(oi => String(oi.item_id) === String(itemId));
+
+    if (!orderItem || !Number.isFinite(quantity) || quantity <= 0) {
+        preview.classList.add('hidden');
+        return;
+    }
+
+    const unitCost = Number(orderItem.custo_unitario) || 0;
+    estimate.textContent = `${formatCurrency(quantity * unitCost)} (${formatUnitCost(unitCost)} × ${quantity.toLocaleString('pt-BR')})`;
+    preview.classList.remove('hidden');
+}
+
+function openProductionModal(recipeId) {
+    loadProductionOrders();
+    updateProductionRecipeOptions(recipeId);
+    document.getElementById('production-quantity').value = '';
+    document.getElementById('production-note').value = '';
+    openModal('modal-producao');
+    updateProductionPreview();
+    if (recipesList.length === 0) showToast('Cadastre uma receita antes de registrar a produção.', 'info');
+}
+
+function getReservedQuantity(itemId, excludeOrderId) {
+    let reserved = 0;
+    (productionOrdersList || []).forEach(order => {
+        if (String(order.status) !== 'EM_ANDAMENTO') return;
+        if (excludeOrderId && String(order.id) === String(excludeOrderId)) return;
+        (order.itens || []).forEach(oi => {
+            if (String(oi.item_id) !== String(itemId)) return;
+            const r = Number(oi.quantidade_reservada) || 0;
+            const l = Number(oi.quantidade_perdida) || 0;
+            reserved += Math.max(0, r - l);
+        });
+    });
+    return reserved;
+}
+
+function getProductionStockIssues(recipe, quantity) {
+    return recipe.itens.reduce((issues, ingredient) => {
+        const item = itemsList.find(entry => String(entry.id) === String(ingredient.item_id));
+        const needed = (Number(ingredient.quantidade) / recipe.rendimento) * quantity;
+        const available = item ? Math.max(0, (Number(item.quantidade) || 0) - getReservedQuantity(ingredient.item_id)) : 0;
+        if (!item) {
+            issues.push({ item: null, ingredient, needed, available: 0 });
+        } else if (item.status === 'CADASTRO PENDENTE' || available + 1e-9 < needed) {
+            issues.push({ item, ingredient, needed, available });
+        }
+        return issues;
+    }, []);
+}
+
+function updateProductionPreview() {
+    const preview = document.getElementById('production-preview');
+    const totalCost = document.getElementById('production-total-cost');
+    const unitCost = document.getElementById('production-unit-cost');
+    const ingredientList = document.getElementById('production-ingredient-list');
+    const warning = document.getElementById('production-stock-warning');
+    const button = document.getElementById('production-submit');
+    const recipeId = document.getElementById('production-recipe').value;
+    const quantity = Number(document.getElementById('production-quantity').value);
+    const recipe = recipesList.find(entry => String(entry.id) === String(recipeId));
+    
+    // A caixa de prévia agora SEMPRE fica visível desde que haja uma receita selecionada
+    if (!preview) return;
+    
+    if (!recipe) {
+        preview.classList.add('hidden');
+        warning.classList.add('hidden');
+        warning.textContent = '';
+        ingredientList.replaceChildren();
+        button.disabled = true;
+        return;
+    }
+
+    // Torna a caixa visível independentemente de ter quantidade ou não
+    preview.classList.remove('hidden');
+    warning.classList.add('hidden');
+    warning.textContent = '';
+    ingredientList.replaceChildren();
+
+    const validQuantity = Number.isSafeInteger(quantity) && quantity > 0 && quantity <= 2147483647;
+
+    if (!validQuantity) {
+        // Se a quantidade for inválida ou vazia, exibe "-" em tudo
+        if (totalCost) totalCost.textContent = '-';
+        if (unitCost) unitCost.textContent = '-';
+
+        recipe.itens.forEach(ingredient => {
+            const item = itemsList.find(entry => String(entry.id) === String(ingredient.item_id));
+            const row = document.createElement('li');
+            row.className = 'flex items-center justify-between gap-3 py-2 text-xs';
+            const name = document.createElement('span');
+            name.className = 'min-w-0 truncate font-medium text-slate-700';
+            name.textContent = item ? item.titulo : 'Insumo não encontrado';
+            const consumption = document.createElement('span');
+            consumption.className = 'shrink-0 font-semibold text-slate-400';
+            consumption.textContent = '-';
+            row.append(name, consumption);
+            ingredientList.appendChild(row);
+        });
+
+        button.disabled = true;
+        return;
+    }
+
+    let estimatedTotal = 0;
+    let hasMissingCost = false;
+    
+    recipe.itens.forEach(ingredient => {
+        const item = itemsList.find(entry => String(entry.id) === String(ingredient.item_id));
+        const needed = (Number(ingredient.quantidade) / recipe.rendimento) * quantity;
+        if (!item) {
+            hasMissingCost = true;
+        } else {
+            estimatedTotal += needed * (Number(item.custo_medio) || 0);
+        }
+
+        const row = document.createElement('li');
+        row.className = 'flex items-center justify-between gap-3 py-2 text-xs';
+        const name = document.createElement('span');
+        name.className = 'min-w-0 truncate font-medium text-slate-700';
+        name.textContent = item ? item.titulo : 'Insumo não encontrado';
+        const consumption = document.createElement('span');
+        consumption.className = 'shrink-0 font-semibold text-slate-600';
+        consumption.textContent = `−${needed.toLocaleString('pt-BR', { maximumFractionDigits: 3 })} ${item ? item.unidade || '' : ''}`;
+        row.append(name, consumption);
+        ingredientList.appendChild(row);
+    });
+
+    totalCost.textContent = hasMissingCost ? '-' : formatCurrency(estimatedTotal);
+    unitCost.textContent = hasMissingCost ? '-' : formatCurrency(estimatedTotal / quantity);
+
+    const issues = getProductionStockIssues(recipe, quantity);
+    if (issues.length) {
+        warning.textContent = issues.map(issue => {
+            const { item, needed, available } = issue;
+            if (!item) return `Insumo "${issue.ingredient.item_id}" não encontrado no estoque.`;
+            if (item.status === 'CADASTRO PENDENTE') {
+                return `${item.titulo}: cadastro pendente; regularize o insumo antes de produzir.`;
+            }
+            return `${item.titulo}: estoque insuficiente (disponível ${available.toLocaleString('pt-BR')} ${item.unidade || ''}; necessário ${needed.toLocaleString('pt-BR')} ${item.unidade || ''}).`;
+        }).join(' ');
+        warning.classList.remove('hidden');
+    }
+    button.disabled = productionSaving || issues.length > 0;
+}
+async function registerProduction() {
+    if (productionSaving) return;
+    if (!supabaseClient || !currentUser) {
+        showToast('Supabase não disponível.', 'error');
+        return;
+    }
+    const recipeId = document.getElementById('production-recipe').value;
+    const quantity = Number(document.getElementById('production-quantity').value);
+    const recipe = recipesList.find(entry => String(entry.id) === String(recipeId));
+    if (!recipe) {
+        showToast('Selecione uma receita válida.', 'error');
+        return;
+    }
+    if (!Number.isSafeInteger(quantity) || quantity <= 0 || quantity > 2147483647) {
+        showToast('Informe uma quantidade inteira de unidades maior que zero.', 'error');
+        return;
+    }
+    if (!recipe.itens.length) {
+        showToast(`A receita "${recipe.nome}" não possui insumos cadastrados.`, 'error');
+        return;
+    }
+
+    const stockIssues = getProductionStockIssues(recipe, quantity);
+    if (stockIssues.length) {
+        updateProductionPreview();
+        const issue = stockIssues[0];
+        if (!issue.item) {
+            showToast(`O insumo "${issue.ingredient.item_id}" da receita não está cadastrado no estoque.`, 'error');
+        } else if (issue.item.status === 'CADASTRO PENDENTE') {
+            showToast(`O insumo "${issue.item.titulo}" está com cadastro pendente.`, 'error');
+        } else {
+            showToast(`Estoque insuficiente para ${issue.item.titulo}: disponível ${issue.available.toLocaleString('pt-BR')} ${issue.item.unidade}, necessário ${issue.needed.toLocaleString('pt-BR')} ${issue.item.unidade}.`, 'error');
+        }
+        return;
+    }
+
+    productionSaving = true;
+    const button = document.getElementById('production-submit');
+    button.disabled = true;
+    button.textContent = 'Registrando...';
+    try {
+        const orderPayload = {
+            user_id: currentUser.id,
+            receita_id: recipe.id,
+            quantidade_planejada: quantity,
+            status: 'EM_ANDAMENTO',
+            custo_acumulado: 0,
+            observacao: document.getElementById('production-note').value.trim() || null
+        };
+        const { data: order, error: orderError } = await supabaseClient
+            .from('ordens_producao')
+            .insert(orderPayload)
+            .select()
+            .single();
+        if (orderError) throw orderError;
+
+        const orderItemsPayload = recipe.itens.map(ingredient => {
+            const needed = (Number(ingredient.quantidade) / recipe.rendimento) * quantity;
+            const item = itemsList.find(i => String(i.id) === String(ingredient.item_id));
+            return {
+                ordem_id: order.id,
+                user_id: currentUser.id,
+                item_id: ingredient.item_id,
+                quantidade_reservada: needed,
+                quantidade_perdida: 0,
+                custo_unitario: item ? (Number(item.custo_medio) || 0) : 0
+            };
+        });
+        const { error: itemsError } = await supabaseClient
+            .from('ordem_itens')
+            .insert(orderItemsPayload);
+        if (itemsError) throw itemsError;
+
+        closeModal('modal-producao');
+        document.getElementById('production-quantity').value = '';
+        document.getElementById('production-note').value = '';
+        await loadProductionOrders();
+        renderProductionOrders();
+        await loadItems();
+        await loadHomeDashboard();
+        if (document.getElementById('sec-ordens-producao') && document.getElementById('sec-ordens-producao').style.display === 'block') {
+            loadOrdensProducaoView();
+        }
+        showToast(`Ordem de produção iniciada: ${quantity.toLocaleString('pt-BR')} unidades. Insumos reservados.`, 'success');
+    } catch (error) {
+        console.error('Erro ao iniciar ordem de produção:', error);
+        showToast('Não foi possível iniciar a ordem: ' + (error && error.message ? error.message : error), 'error');
+    } finally {
+        productionSaving = false;
+        button.disabled = false;
+        button.textContent = 'Iniciar Ordem';
+        updateProductionPreview();
+    }
+}
+
+async function registerLoss() {
+    if (!supabaseClient || !currentUser) {
+        showToast('Supabase não disponível.', 'error');
+        return;
+        
+    }
+
+    const orderId = document.getElementById('loss-order') ? document.getElementById('loss-order').value : '';
+    const itemId = document.getElementById('loss-item') ? document.getElementById('loss-item').value : '';
+    const qty = Number(document.getElementById('loss-quantity').value) || 0;
+    const description = (document.getElementById('loss-description').value || '').trim();
+    const order = productionOrdersList.find(o => String(o.id) === String(orderId));
+    if (!order) {
+        showToast('Selecione a ordem de produção.', 'error');
+        return;
+    }
+    const orderItem = order.itens.find(oi => String(oi.item_id) === String(itemId));
+    if (qty <= 0) {
+        showToast('Informe a quantidade perdida ou o custo adicional.', 'error');
+        return;
+    }
+
+    if (qty <= 0) {
+        showToast('Informe uma quantidade perdida maior que zero.', 'error');
+        return;
+    }
+    
+    if (qty > 0 && (!orderItem || qty > (orderItem.quantidade_reservada - orderItem.quantidade_perdida) + 1e-9)) {
+        showToast('Quantidade perdida maior que o reservado.', 'error');
+        return;
+    }
+
+    try {
+        const item = itemsList.find(i => String(i.id) === String(itemId));
+        const unitCost = orderItem ? (Number(orderItem.custo_unitario) || 0) : 0;
+
+        if (qty > 0 && item) {
+            const { error: itemError } = await supabaseClient
+                .from('itens')
+                .update({ quantidade: Math.max(0, (Number(item.quantidade) || 0) - qty) })
+                .eq('id', item.id)
+                .eq('user_id', currentUser.id);
+            if (itemError) throw itemError;
+
+            const { error: histError } = await supabaseClient
+                .from('historico')
+                .insert([{
+                    item_id: item.id,
+                    user_id: currentUser.id,
+                    tipo: 'SAIDA',
+                    quantidade: qty,
+                    valor_total: qty * unitCost,
+                    custo_unitario: unitCost,
+                    observacao: `Perda O.P. ${String(order.id).slice(0,8)}: ${description || 'ocorrência'}`
+                }]);
+            if (histError) throw histError;
+
+            const newLost = (Number(orderItem.quantidade_perdida) || 0) + qty;
+            const { error: oiError } = await supabaseClient
+                .from('ordem_itens')
+                .update({ quantidade_perdida: newLost })
+                .eq('ordem_id', order.id)
+                .eq('item_id', itemId)
+                .eq('user_id', currentUser.id);
+            if (oiError) throw oiError;
+        }
+
+        const finalCusto = (Number(order.custo_acumulado) || 0) + (qty * unitCost);
+
+        const { error: orderError } = await supabaseClient
+            .from('ordens_producao')
+            .update({ custo_acumulado: finalCusto })
+            .eq('id', order.id)
+            .eq('user_id', currentUser.id);
+        if (orderError) throw orderError;
+
+        const { error: perdaError } = await supabaseClient
+            .from('ordem_perdas')
+            .insert([{
+                ordem_id: order.id,
+                user_id: currentUser.id,
+                item_id: itemId || null,
+                quantidade: qty,
+                custo: qty * unitCost,
+                descricao: description || null
+            }]);
+        if (perdaError) throw perdaError;
+
+        document.getElementById('loss-quantity').value = '';
+        document.getElementById('loss-description').value = '';
+        updateLossCostPreview();
+        await loadProductionOrders();
+        await loadItems();
+        await loadHomeDashboard();
+        showToast('Perda registrada. Estoque físico atualizado.', 'success');
+    } catch (error) {
+        console.error('Erro ao registrar perda:', error);
+        showToast('Não foi possível registrar a perda: ' + (error && error.message ? error.message : error), 'error');
+    }
+}
+
+async function closeProductionOrder() {
+    if (!supabaseClient || !currentUser) {
+        showToast('Supabase não disponível.', 'error');
+        return;
+    }
+    const orderId = document.getElementById('close-order') ? document.getElementById('close-order').value : '';
+    const yieldQty = Number(document.getElementById('close-yield').value) || 0;
+    const finalLossCost = Number(document.getElementById('close-final-loss').value) || 0;
+    const note = (document.getElementById('close-note').value || '').trim();
+    const order = productionOrdersList.find(o => String(o.id) === String(orderId));
+    if (!order) {
+        showToast('Selecione a ordem de produção.', 'error');
+        return;
+    }
+    if (yieldQty <= 0) {
+        showToast('Informe o rendimento real obtido.', 'error');
+        return;
+    }
+    try {
+        const recipe = recipesList.find(r => String(r.id) === String(order.receita_id));
+        let accumulatedCost = Number(order.custo_acumulado) || 0;
+        for (const oi of order.itens) {
+            const remaining = Math.max(0, (Number(oi.quantidade_reservada) || 0) - (Number(oi.quantidade_perdida) || 0));
+            if (remaining <= 0) continue;
+            const item = itemsList.find(i => String(i.id) === String(oi.item_id));
+            if (item) {
+                const { error: itemError } = await supabaseClient
+                    .from('itens')
+                    .update({ quantidade: Math.max(0, (Number(item.quantidade) || 0) - remaining) })
+                    .eq('id', item.id)
+                    .eq('user_id', currentUser.id);
+                if (itemError) throw itemError;
+                const unitCost = Number(oi.custo_unitario) || 0;
+                const { error: histError } = await supabaseClient
+                    .from('historico')
+                    .insert([{
+                        item_id: item.id,
+                        user_id: currentUser.id,
+                        tipo: 'SAIDA',
+                        quantidade: remaining,
+                        valor_total: remaining * unitCost,
+                        custo_unitario: unitCost,
+                        observacao: `Encerramento O.P. ${String(order.id).slice(0,8)}${note ? ' · ' + note : ''}`
+                    }]);
+                if (histError) throw histError;
+            }
+            accumulatedCost += remaining * (Number(oi.custo_unitario) || 0);
+        }
+        accumulatedCost += finalLossCost;
+
+        const unitCostPa = accumulatedCost / yieldQty;
+        const paName = recipe ? recipe.nome : 'Produto Acabado';
+        let paItem = itemsList.find(i => String(i.titulo || '').trim().toLowerCase() === String(paName).trim().toLowerCase());
+        if (paItem) {
+            const oldQty = Number(paItem.quantidade) || 0;
+            const oldCost = Number(paItem.custo_medio) || 0;
+            const newQty = oldQty + yieldQty;
+            const newAvg = newQty > 0 ? ((oldQty * oldCost) + (yieldQty * unitCostPa)) / newQty : unitCostPa;
+            const { error: paError } = await supabaseClient
+                .from('itens')
+                .update({ quantidade: newQty, custo_medio: newAvg, status: 'ATIVO NO ESTOQUE', categoria: normalizeCategory(paItem.categoria) || 'PRODUTO_PRONTO' })
+                .eq('id', paItem.id)
+                .eq('user_id', currentUser.id);
+            if (paError) throw paError;
+            paItem.quantidade = newQty;
+            paItem.custo_medio = newAvg;
+            paItem.categoria = normalizeCategory(paItem.categoria) || 'PRODUTO_PRONTO';
+        } else {
+            const { data: created, error: createError } = await supabaseClient
+                .from('itens')
+                .insert([{
+                    id: generateId(),
+                    codigo: generateItemCode(),
+                    user_id: currentUser.id,
+                    titulo: paName,
+                    categoria: 'PRODUTO_PRONTO',
+                    unidade: 'UN',
+                    quantidade: yieldQty,
+                    custo_medio: unitCostPa,
+                    status: 'ATIVO NO ESTOQUE'
+                }])
+                .select()
+                .single();
+            if (createError) throw createError;
+            paItem = created;
+            itemsList.unshift(normalizeItem(created));
+        }
+        const { error: entryHistError } = await supabaseClient
+            .from('historico')
+            .insert([{
+                item_id: paItem.id,
+                user_id: currentUser.id,
+                tipo: 'ENTRADA',
+                quantidade: yieldQty,
+                valor_total: yieldQty * unitCostPa,
+                custo_unitario: unitCostPa,
+                observacao: `Produção concluída: O.P. ${String(order.id).slice(0,8)}${note ? ' · ' + note : ''}`
+            }]);
+        if (entryHistError) throw entryHistError;
+
+        const { error: closeError } = await supabaseClient
+            .from('ordens_producao')
+            .update({
+                status: 'CONCLUIDA',
+                custo_acumulado: accumulatedCost,
+                rendimento_real: yieldQty,
+                perdas_finais: finalLossCost,
+                observacao: note || order.observacao,
+                encerrada_at: new Date().toISOString()
+            })
+            .eq('id', order.id)
+            .eq('user_id', currentUser.id);
+        if (closeError) throw closeError;
+
+        document.getElementById('close-yield').value = '';
+        document.getElementById('close-final-loss').value = '';
+        document.getElementById('close-note').value = '';
+        await loadProductionOrders();
+        await loadItems();
+        await loadHomeDashboard();
+        showToast(`Ordem encerrada. ${yieldQty.toLocaleString('pt-BR')} UN de ${paName} gerado.`, 'success');
+    } catch (error) {
+        console.error('Erro ao encerrar ordem:', error);
+        showToast('Não foi possível encerrar a ordem: ' + (error && error.message ? error.message : error), 'error');
+    }
+}
+
+async function cancelProductionOrder(orderIdParam) {
+    if (!supabaseClient || !currentUser) {
+        showToast('Supabase não disponível.', 'error');
+        return;
+    }
+    const orderId = orderIdParam || (document.getElementById('close-order') ? document.getElementById('close-order').value : '');
+    const order = productionOrdersList.find(o => String(o.id) === String(orderId));
+    if (!order) {
+        showToast('Selecione a ordem de produção.', 'error');
+        return;
+    }
+    if (!confirm('Cancelar esta ordem e liberar os insumos reservados?')) return;
+    try {
+        const { error } = await supabaseClient
+            .from('ordens_producao')
+            .update({ status: 'CANCELADA', encerrada_at: new Date().toISOString() })
+            .eq('id', order.id)
+            .eq('user_id', currentUser.id);
+        if (error) throw error;
+        await loadProductionOrders();
+        await loadItems();
+        await loadHomeDashboard();
+        showToast('Ordem cancelada. Insumos reservados liberados.', 'success');
+    } catch (error) {
+        console.error('Erro ao cancelar ordem:', error);
+        showToast('Não foi possível cancelar a ordem: ' + (error && error.message ? error.message : error), 'error');
+    }
+}
+
+function updateCloseOrderPreview() {
+    // placeholder
+}
+
+function openLossModal(orderId) {
+    updateProductionOrderOptions();
+    const select = document.getElementById('loss-order');
+    if (select && orderId) select.value = orderId;
+    updateLossOrderPreview();
+    openModal('modal-op-perda');
+}
+
+async function openCloseModal(orderId) {
+    const targetId = orderId || currentDetailOrderId;
+    updateProductionOrderOptions();
+    
+    const select = document.getElementById('close-order');
+    if (select && targetId) {
+        select.value = targetId;
+    }
+
+    const order = productionOrdersList.find(o => String(o.id) === String(targetId));
+    if (!order) return;
+
+    const recipe = recipesList.find(r => String(r.id) === String(order.receita_id));
+    const name = recipe ? recipe.nome : 'Produto Acabado';
+
+    // 1. Preencher informações visuais da receita travada no modal (corrigido numa única linha)
+    const inputName = document.getElementById('close-order-name-display');
+    if (inputName) {
+        inputName.value = `${name} - ${Number(order.quantidade_planejada).toLocaleString('pt-BR')} UN`;
+    }
+
+    // 2. Sugerir rendimento real padrão igual ao planejado
+    const yieldInput = document.getElementById('close-yield');
+    if (yieldInput) yieldInput.value = order.quantidade_planejada || '';
+
+    // 3. Somar automaticamente as perdas registradas no histórico deste lote
+    let totalLossCost = 0;
+    if (supabaseClient && currentUser) {
+        try {
+            const { data: losses } = await supabaseClient
+                .from('ordem_perdas')
+                .select('custo')
+                .eq('ordem_id', order.id)
+                .eq('user_id', currentUser.id);
+
+            if (losses && losses.length > 0) {
+                totalLossCost = losses.reduce((acc, p) => acc + (Number(p.custo) || 0), 0);
+            }
+        } catch (e) {
+            console.error('Erro ao somar perdas do lote:', e);
+        }
+    }
+
+    // 4. Preencher o campo de perdas finais automaticamente
+    const finalLossInput = document.getElementById('close-final-loss');
+    if (finalLossInput) {
+        finalLossInput.value = totalLossCost > 0 ? totalLossCost.toFixed(2) : '0';
+    }
+
+    // 5. Limpar observações e abrir o modal
+    const noteInput = document.getElementById('close-note');
+    if (noteInput) noteInput.value = '';
+
+    openModal('modal-op-encerrar');
+    if (window.lucide) lucide.createIcons();
+}
+
+function normalizeItem(i) {
+    const quantidade = Number(i.quantidade) || 0;
+    return {
+        ...i,
+        categoria: normalizeCategory(i.categoria),
+        quantidade,
+        custo_medio: Number(i.custo_medio) || 0,
+        status: i.status === 'COM MOVIMENTAÇÕES' ? 'ATIVO NO ESTOQUE' : (i.status || (quantidade > 0 ? 'ATIVO NO ESTOQUE' : 'SEM MOVIMENTAÇÕES'))
+    };
+}
+
+function setStatValue(id, text, color) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = text;
+    el.style.setProperty('display', 'block', 'important');
+    el.style.setProperty('visibility', 'visible', 'important');
+    el.style.setProperty('opacity', '1', 'important');
+    if (color) el.style.setProperty('color', color, 'important');
+}
+
+// Atualiza os 3 cards (Saldo, Custo Médio e Status) do modal do item
+function updateModalStatsUI(item) {
+    if (!item) return;
+    const qtd = Number(item.quantidade) || 0;
+    const custo = Number(item.custo_medio) || 0;
+    const unidade = item.unidade || '';
+    const status = item.status || (qtd > 0 ? 'ATIVO NO ESTOQUE' : 'SEM MOVIMENTAÇÕES');
+    const pendente = status === 'CADASTRO PENDENTE';
+    const semMov = status === 'SEM MOVIMENTAÇÕES';
+
+    setStatValue('modal-stock-balance', qtd.toLocaleString('pt-BR') + ' ' + unidade, '#1e293b');
+    setStatValue('modal-avg-cost', formatUnitCost(custo) + (unidade ? ' / ' + unidade.toLowerCase() : ''), '#0369a1');
+    setStatValue('modal-status-badge', pendente ? 'CADASTRO PENDENTE' : semMov ? 'SEM MOVIMENTAÇÕES' : 'ATIVO NO ESTOQUE', pendente || semMov ? '#b45309' : '#047857');
+}
+
+function saveItemsLocalFallback() {
+    try {
+        if (currentUser) {
+            localStorage.setItem('items_' + currentUser.id, JSON.stringify(itemsList));
+        }
+    } catch (e) { console.error(e); }
+}
+
+function renderItems() {
+    const tbody = document.getElementById('items-table-body');
+    const emptyState = document.getElementById('empty-state');
+    if (!tbody || !emptyState) return;
+    const search = (document.getElementById('search-input')?.value || '').trim().toLocaleLowerCase('pt-BR');
+    const filterUnit = document.getElementById('unit-filter')?.value || 'ALL';
+
+    const filtered = itemsList.filter(item => {
+        const searchableText = `${item.titulo || ''} ${item.codigo || ''}`.toLocaleLowerCase('pt-BR');
+        const matchesSearch = searchableText.includes(search);
+        const matchesUnit = filterUnit === 'ALL' || String(item.unidade || '').toUpperCase() === filterUnit;
+        // Filtro por categoria; itens antigos sem categoria só aparecem em "Todos"
+        const matchesType = currentStockTypeFilter === 'ALL' ||
+            normalizeCategory(item.categoria) === STOCK_FILTER_TO_CATEGORY[currentStockTypeFilter];
+        return matchesSearch && matchesUnit && matchesType;
+    });
+
+    tbody.innerHTML = '';
+
+    if (filtered.length === 0) {
+        emptyState.classList.remove('hidden');
+        const heading = emptyState.querySelector('h4');
+        const description = emptyState.querySelector('p');
+        if (heading) heading.textContent = itemsList.length ? 'Nenhum item corresponde aos filtros' : 'Nenhum item encontrado';
+        if (description) description.textContent = itemsList.length
+            ? 'Ajuste a pesquisa ou os filtros para ver outros itens.'
+            : 'Cadastre novos insumos para começar o controle de custos.';
+        return;
+    } else {
+        emptyState.classList.add('hidden');
+    }
+
+    filtered.forEach(item => {
+        const tr = document.createElement('tr');
+
+
+        tr.className = 'hover:bg-slate-50/80 transition-colors cursor-pointer border-b border-slate-100';
+        tr.onclick = () => openItemDetailsModal(item.id);
+
+        const avgCostFormatted = formatUnitCost(item.custo_medio || 0);
+        const unitLabel = item.unidade;
+
+        let statusBadge = '';
+        if (item.status === 'CADASTRO PENDENTE') {
+            statusBadge = '<span class="px-2.5 py-1 bg-amber-50 text-amber-800 border border-amber-300 rounded-full text-[11px] font-semibold whitespace-nowrap">Cadastro Pendente</span>';
+        } else if (item.status === 'SEM MOVIMENTAÇÕES') {
+            statusBadge = '<span class="px-2.5 py-1 bg-amber-50 text-amber-700 border border-amber-200 rounded-full text-[11px] font-medium whitespace-nowrap">Sem Movimentações</span>';
+        } else {
+            statusBadge = '<span class="px-2.5 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full text-[11px] font-medium whitespace-nowrap">Ativo no Estoque</span>';
+        }
+
+        const categoryKey = normalizeCategory(item.categoria);
+        const missingCategoryBadge = categoryKey ? '' :
+            '<span role="img" aria-label="Categoria não definida" title="Categoria não definida — clique no item para definir" ' +
+            'class="ml-2 inline-flex items-center justify-center w-5 h-5 rounded-full bg-amber-100 text-amber-700 border border-amber-300 text-[11px] font-bold align-middle">!</span>';
+        const categoryCell = categoryKey
+            ? `<span class="px-2 py-0.5 bg-slate-100 text-slate-700 rounded text-xs font-medium">${ITEM_CATEGORIES[categoryKey]}</span>`
+            : '<span class="text-xs font-medium text-amber-700">Não definida</span>';
+
+        tr.innerHTML = `
+            <td class="px-3 sm:px-6 py-4 font-semibold text-slate-900 min-w-[140px]">${escapeHtml(item.titulo)}${missingCategoryBadge}</td>
+            <td class="hidden md:table-cell px-6 py-4 whitespace-nowrap">${categoryCell}</td>
+            <td class="px-3 sm:px-6 py-4 whitespace-nowrap">
+                <span class="px-2 py-0.5 bg-slate-100 text-slate-600 rounded text-xs font-mono font-medium">${item.unidade}</span>
+            </td>
+            <td class="px-3 sm:px-6 py-4 font-semibold text-slate-800 whitespace-nowrap">${Number(item.quantidade || 0).toLocaleString('pt-BR')} ${item.unidade}</td>
+            <td class="hidden md:table-cell px-6 py-4 font-bold text-brand-600 whitespace-nowrap">
+                ${avgCostFormatted} <span class="text-[10px] text-slate-400 font-normal">/ ${unitLabel.toLowerCase()}</span>
+            </td>
+            <td class="hidden md:table-cell px-6 py-4 whitespace-nowrap">${statusBadge}</td>
+            <td class="px-3 sm:px-6 py-4 text-right">
+                <button onclick="event.stopPropagation(); openItemDetailsModal('${item.id}')" class="p-1.5 text-slate-400 hover:text-brand-600 hover:bg-brand-50 rounded-lg transition-all">
+                    <i data-lucide="eye" class="w-4 h-4"></i>
+                </button>
+            </td>
+        `;
+        tbody.appendChild(tr);
+    });
+
+    if (window.lucide) lucide.createIcons();
+}
+
+function setStockTypeFilter(type) {
+    const validTypes = ['ALL', 'INGREDIENT', 'PACKAGING', 'FINISHED'];
+    currentStockTypeFilter = validTypes.includes(type) ? type : 'ALL';
+
+    const buttonIds = {
+        ALL: 'stock-type-all',
+        INGREDIENT: 'stock-type-ingredient',
+        PACKAGING: 'stock-type-packaging',
+        FINISHED: 'stock-type-finished'
+    };
+    Object.entries(buttonIds).forEach(([filterType, buttonId]) => {
+        const button = document.getElementById(buttonId);
+        if (!button) return;
+        const isActive = filterType === currentStockTypeFilter;
+        button.classList.toggle('is-active', isActive);
+        button.classList.toggle('bg-brand-600', isActive);
+        button.classList.toggle('border-brand-600', isActive);
+        button.classList.toggle('text-white', isActive);
+        button.classList.toggle('bg-white', !isActive);
+        button.classList.toggle('border-slate-200', !isActive);
+        button.classList.toggle('text-slate-600', !isActive);
+        button.classList.toggle('hover:bg-slate-50', !isActive);
+        button.setAttribute('aria-pressed', String(isActive));
+    });
+
+    renderItems();
+}
+function closeModal(id) {
+    const modal = document.getElementById(id);
+    if (modal) modal.classList.add('hidden');
+}
+
+function openNewItemModal() {
+    document.getElementById('new-title').value = '';
+    document.getElementById('new-category').value = 'INGREDIENTE';
+    document.getElementById('new-unit').value = 'GR';
+    document.getElementById('new-has-movement').checked = false;
+    document.getElementById('movement-fields').classList.add('hidden');
+    document.getElementById('new-quantity').value = '';
+    document.getElementById('new-total-cost').value = '';
+    document.getElementById('new-unit-price-toggle').checked = false;
+    const preview = document.getElementById('new-calculated-preview');
+    if (preview) preview.classList.add('hidden');
+    applyNewItemCategoryRules(); // reabilita unidade / primeira entrada para a categoria padrão
+    calculateNewItemUnitPreview(); // garante o rótulo "Valor Total Pago (R$)" ao abrir
+    openModal('modal-new-item');
+    if (window.lucide) lucide.createIcons();
+}
+
+// Regras do cadastro por categoria:
+//  - Embalagem: unidade fixa em UN (campo bloqueado)
+//  - Ingrediente: GR, ML ou UN à escolha
+//  - Produto Pronto: só referência de catálogo, sem primeira entrada (saldo inicial 0)
+function applyNewItemCategoryRules() {
+    const category = normalizeCategory(document.getElementById('new-category').value) || 'INGREDIENTE';
+    const unitSelect = document.getElementById('new-unit');
+    const firstEntryBlock = document.getElementById('new-first-entry-block');
+    const hasMovement = document.getElementById('new-has-movement');
+    const hint = document.getElementById('new-category-hint');
+
+    if (category === 'EMBALAGEM') {
+        unitSelect.value = 'UN';
+        unitSelect.disabled = true;
+    } else {
+        unitSelect.disabled = false;
+    }
+
+    if (category === 'PRODUTO_PRONTO') {
+        hasMovement.checked = false;
+        toggleMovementFields();
+        if (firstEntryBlock) firstEntryBlock.classList.add('hidden');
+    } else if (firstEntryBlock) {
+        firstEntryBlock.classList.remove('hidden');
+    }
+
+    if (hint) {
+        const messages = {
+            EMBALAGEM: 'Embalagens são sempre controladas em UN.',
+            PRODUTO_PRONTO: 'Produto pronto é apenas uma referência de catálogo: o cadastro não altera o estoque (saldo inicial 0).'
+        };
+        hint.textContent = messages[category] || '';
+        hint.classList.toggle('hidden', !messages[category]);
+    }
+    calculateNewItemUnitPreview();
+}
+
+function toggleMovementFields() {
+    const checked = document.getElementById('new-has-movement').checked;
+    const container = document.getElementById('movement-fields');
+    if (checked) container.classList.remove('hidden');
+    else container.classList.add('hidden');
+}
+
+function calculateNewItemUnitPreview() {
+    const qty = parseQuantityInput(document.getElementById('new-quantity').value);
+    const rawCost = parseCurrencyInput(document.getElementById('new-total-cost').value);
+    const isUnitPrice = document.getElementById('new-unit-price-toggle').checked;
+    const unit = (document.getElementById('new-unit') || {}).value;
+    const label = document.getElementById('new-price-label');
+    const preview = document.getElementById('new-calculated-preview');
+
+    // O rótulo é atualizado sempre, independente da prévia
+    if (label) label.textContent = isUnitPrice ? 'Valor Unitário (R$)' : 'Valor Total Pago (R$)';
+
+    if (!preview) return;
+
+    if (qty > 0 && rawCost > 0) {
+        const total = calcEntryTotal(qty, rawCost, unit, isUnitPrice);
+        preview.textContent = isUnitPrice
+            ? 'Custo unitário: ' + formatUnitCost(total / qty) + ' · Total calculado: ' + formatCurrency(total)
+            : 'Custo unitário: ' + formatUnitCost(total / qty);
+        preview.classList.remove('hidden');
+    } else {
+        preview.classList.add('hidden');
+    }
+}
+
+document.addEventListener('input', (e) => {
+    if (e.target && (e.target.id === 'new-quantity' || e.target.id === 'new-total-cost')) {
+        calculateNewItemUnitPreview();
+    }
+});
+
+document.addEventListener('change', (e) => {
+    if (e.target && (e.target.id === 'new-unit-price-toggle' || e.target.id === 'new-unit')) {
+        calculateNewItemUnitPreview();
+    }
+});
+
+function generateId() {
+    if (window.crypto && typeof crypto.randomUUID === 'function') {
+        return crypto.randomUUID();
+    }
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+        const r = Math.random() * 16 | 0;
+        const v = c === 'x' ? r : (r & 0x3 | 0x8);
+        return v.toString(16);
+    });
+}
+
+function generateItemCode() {
+    const randomNum = Math.floor(10000000 + Math.random() * 90000000);
+    return 'MP' + randomNum;
+}
+
+async function handleCreateItemSubmit(event) {
+    event.preventDefault();
+    const rawTitle = document.getElementById('new-title').value.trim();
+    const title = rawTitle.charAt(0).toUpperCase() + rawTitle.slice(1);
+    const category = normalizeCategory(document.getElementById('new-category').value);
+    // Regras reforçadas aqui também (não dependem só do estado dos campos na tela)
+    const unit = category === 'EMBALAGEM' ? 'UN' : document.getElementById('new-unit').value;
+    const hasMovement = category !== 'PRODUTO_PRONTO' && document.getElementById('new-has-movement').checked;
+
+    if (!title) {
+        showToast('Informe o nome do item.', 'error');
+        return;
+    }
+    if (!category) {
+        showToast('Selecione a categoria do item.', 'error');
+        return;
+    }
+
+    const codigo =  generateItemCode();
+
+    let current_stock = 0;
+    let avg_unit_cost = 0;
+    let initial_total = 0;
+    let status = 'SEM MOVIMENTAÇÕES';
+
+    if (hasMovement) {
+        const qty = parseQuantityInput(document.getElementById('new-quantity').value);
+        const rawCost = parseCurrencyInput(document.getElementById('new-total-cost').value);
+        const isUnitPrice = document.getElementById('new-unit-price-toggle').checked;
+
+        if (qty <= 0) {
+            showToast('Quantidade inválida.', 'error');
+            return;
+        }
+
+        current_stock = qty;
+        
+        // Total real da entrada (valor unitário em GR/ML é por 1.000) e custo por unidade base
+        initial_total = calcEntryTotal(qty, rawCost, unit, isUnitPrice);
+        avg_unit_cost = qty > 0 ? initial_total / qty : 0;
+        
+        status = 'ATIVO NO ESTOQUE';
+    }
+
+    const newItem = {
+        id: generateId(),
+        codigo,
+        user_id: currentUser.id,
+        titulo: title,
+        categoria: category,
+        unidade: unit,
+        quantidade: current_stock,
+        custo_medio: avg_unit_cost,
+        status,
+        created_at: new Date().toISOString()
+    };
+
+    if (supabaseClient && !currentUser.id.startsWith('offline-')) {
+        try {
+            const { data, error } = await supabaseClient.from('itens').insert([{
+                id: newItem.id,
+                codigo: newItem.codigo,
+                user_id: currentUser.id,
+                titulo: title,
+                categoria: category,
+                unidade: unit,
+                quantidade: Number(current_stock) || 0,
+                custo_medio: Number(avg_unit_cost) || 0,
+                status
+            }]).select().single();
+            if (error) throw error;
+            itemsList.unshift(normalizeItem(data));
+            populateItemsDatalist();
+
+            // Se o item foi criado com uma entrada inicial, regista também no histórico
+            if (hasMovement && current_stock > 0) {
+                const totalCostVal = initial_total;
+
+                await supabaseClient.from('historico').insert([{
+                    item_id: newItem.id,
+                    user_id: currentUser.id,
+                    tipo: 'ENTRADA',
+                    quantidade: Number(current_stock),
+                    valor_total: totalCostVal, // Agora vai registar R$ 10,00 corretamente!
+                    custo_unitario: Number(avg_unit_cost)
+                }]);
+            }
+        } catch (err) {
+            console.error(err);
+            // Coluna "categoria" ainda não criada no Supabase: não finge que salvou
+            if (/categoria/i.test(String(err && err.message))) {
+                showToast('Não foi possível salvar: a coluna "categoria" não existe na tabela itens. Execute o SQL de migração no Supabase.', 'error');
+                return;
+            }
+            itemsList.unshift(newItem);
+            populateItemsDatalist();
+        }
+    }
+
+
+    saveItemsLocalFallback();
+    closeModal('modal-new-item');
+    renderItems();
+    updateStats();
+    populateItemsDatalist();
+    showToast('Item cadastrado com sucesso.', 'success');
+}
+
+// ===== Nova Compra (vários itens numa única compra) =====
+let purchaseRowSeq = 0;
+let purchaseSaving = false;
+const purchaseAc = { el: null, input: null, active: -1 };
+
+const PR_LABEL = 'block h-4 leading-4 text-[11px] font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap mb-1';
+const PR_FIELD = 'mov-input w-full h-10 px-3 bg-white border border-slate-300 rounded-lg text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 disabled:bg-slate-100 disabled:text-slate-500 disabled:cursor-not-allowed';
+const PR_HINT = 'pr-hint mt-1 text-[11px] font-medium rounded-md px-2 py-0.5 border w-fit max-w-full';
+
+function normalizeName(s) {
+    return String(s || '').trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+// Mesma regra do cadastro manual: primeira letra maiúscula
+function formatItemName(s) {
+    const t = String(s || '').trim().replace(/\s+/g, ' ');
+    return t.charAt(0).toUpperCase() + t.slice(1);
+}
+
+function findItemByName(name) {
+    const key = normalizeName(name);
+    if (!key) return null;
+    return (itemsList || []).find(i => normalizeName(i.titulo || i.title || i.nome) === key) || null;
+}
+
+function openNewPurchaseModal() {
+    resetPurchaseForm();
+    openModal('modal-new-purchase');
+    setTimeout(() => {
+        const first = document.querySelector('#purchase-rows .pr-name');
+        if (first) first.focus();
+    }, 250);
+}
+
+function resetPurchaseForm() {
+    const wrap = document.getElementById('purchase-rows');
+    if (wrap) wrap.innerHTML = '';
+    hidePurchaseAutocomplete();
+    purchaseRowSeq = 0;
+    addPurchaseRow(false);
+    updatePurchaseTotals();
+}
+
+function addPurchaseRow(focus) {
+    const wrap = document.getElementById('purchase-rows');
+    if (!wrap) return;
+    purchaseRowSeq++;
+
+    const row = document.createElement('div');
+    row.className = 'purchase-row purchase-grid items-start p-3 md:p-0 border border-slate-200 md:border-0 rounded-xl bg-slate-50/60 md:bg-transparent';
+    row.innerHTML = `
+        <div class="col-span-2 md:col-span-1 min-w-0">
+            <label class="${PR_LABEL}">Item</label>
+            <div class="pr-new-wrap relative">
+                <input type="text" class="pr-name ${PR_FIELD}" placeholder="Digite ou selecione o item" autocomplete="off" aria-label="Item">
+                <button type="button" class="pr-new-btn hidden absolute right-2 top-1/2 -translate-y-1/2 w-6 h-6 items-center justify-center rounded-full text-amber-500 hover:text-amber-600 focus:outline-none focus:ring-2 focus:ring-amber-400" aria-label="Aviso: item novo" aria-expanded="false">
+                    <i data-lucide="alert-circle" class="w-5 h-5 pointer-events-none"></i>
+                </button>
+                <div role="tooltip" class="pr-new-tip hidden absolute right-0 top-full mt-1.5 z-20 w-64 max-w-[85vw] px-3 py-2 rounded-lg bg-slate-800 text-white text-xs leading-snug shadow-lg">Item novo — selecione a unidade; ele será cadastrado automaticamente.</div>
+            </div>
+            <div class="${PR_HINT} hidden"></div>
+        </div>
+        <div class="min-w-0">
+            <label class="${PR_LABEL}">Unidade</label>
+            <div class="relative">
+                <select class="pr-unit ${PR_FIELD} appearance-none cursor-pointer pr-8 bg-white" aria-label="Unidade de medida">
+                    <option value="" selected>Selecione...</option>
+                    <option value="GR">GR - Gramas</option>
+                    <option value="UN">UN - Unidades</option>
+                    <option value="ML">ML - Mililitros</option>
+                </select>
+                <span class="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400 text-xs">▼</span>
+            </div>
+            <p class="pr-unit-msg hidden mt-1 text-[11px] font-semibold text-rose-600">Selecione a unidade</p>
+        </div>
+        <div class="min-w-0">
+            <label class="${PR_LABEL}">Quantidade</label>
+            <input type="text" inputmode="decimal" autocomplete="off" data-mask="quantity" class="pr-qty ${PR_FIELD}" placeholder="Ex: 500" aria-label="Quantidade">
+        </div>
+        <div class="col-span-2 md:col-span-1 min-w-0">
+            <div class="flex items-center justify-between gap-2 h-4 mb-1">
+                <label class="pr-price-label block leading-4 text-[11px] font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">Valor Total Pago (R$)</label>
+                <label class="flex items-center gap-1 h-4 leading-4 text-[10px] font-medium text-emerald-700 cursor-pointer select-none whitespace-nowrap">
+                    <input type="checkbox" class="pr-unit-price-toggle rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 w-3.5 h-3.5">
+                    <span>Valor Unitário</span>
+                </label>
+            </div>
+            <input type="text" inputmode="numeric" autocomplete="off" data-mask="currency" class="pr-total ${PR_FIELD}" placeholder="R$ 0,00" aria-label="Valor total ou unitário">
+            <p class="pr-cost hidden mt-1 text-[11px] text-slate-500 font-medium"></p>
+        </div>
+        <div class="col-span-2 md:col-span-1 md:pt-5">
+            <button type="button" class="pr-remove w-full md:w-10 h-10 flex items-center justify-center gap-2 text-sm font-medium text-slate-500 hover:text-rose-600 hover:bg-rose-50 border border-slate-200 md:border-transparent rounded-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-slate-500" title="Remover item" aria-label="Remover item da compra">
+                <i data-lucide="trash-2" class="w-4 h-4"></i>
+                <span class="md:hidden">Remover item</span>
+            </button>
+        </div>
+    `;
+    wrap.appendChild(row);
+    if (window.lucide) lucide.createIcons();
+    refreshPurchaseUI();
+
+    if (focus) {
+        row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        row.querySelector('.pr-name').focus({ preventScroll: true });
+    }
+}
+
+// Preenche/bloqueia a unidade e mostra o aviso conforme o item exista ou não no banco
+function syncPurchaseRowItem(row) {
+    const name = row.querySelector('.pr-name').value.trim();
+    const unitEl = row.querySelector('.pr-unit');
+    const hint = row.querySelector('.pr-hint');
+    const item = findItemByName(name);
+
+    // Se a unidade estava preenchida automaticamente (item existente), ela volta a ficar em branco
+    if (unitEl.dataset.autofilled === '1' && !item) {
+        unitEl.value = '';
+        delete unitEl.dataset.autofilled;
+    }
+    setPurchaseUnitError(row, false);
+
+    const nameEl = row.querySelector('.pr-name');
+    const newBtn = row.querySelector('.pr-new-btn');
+    const isNew = !!name && !item;
+    // Ícone "!" só aparece para item novo; o aviso amarelo fixo foi removido
+    newBtn.classList.toggle('hidden', !isNew);
+    newBtn.classList.toggle('flex', isNew);
+    nameEl.style.paddingRight = isNew ? '2.25rem' : '';
+    if (!isNew) closePurchaseNewTip(row);
+
+    if (!name) {
+        unitEl.disabled = false;
+        hint.classList.add('hidden');
+        return;
+    }
+    if (item) {
+        unitEl.value = item.unidade;
+        unitEl.disabled = true;
+        unitEl.dataset.autofilled = '1';
+        hint.className = PR_HINT + ' bg-emerald-50 text-emerald-700 border-emerald-200';
+        hint.textContent = 'Item cadastrado · saldo atual: ' + Number(item.quantidade || 0).toLocaleString('pt-BR') + ' ' + item.unidade;
+    } else {
+        unitEl.disabled = false;
+        hint.classList.add('hidden');
+    }
+}
+
+// ----- Tooltip do ícone "!" (item novo): hover no desktop, toque/clique no mobile -----
+function closePurchaseNewTip(row) {
+    const tip = row && row.querySelector('.pr-new-tip');
+    const btn = row && row.querySelector('.pr-new-btn');
+    if (tip) tip.classList.add('hidden');
+    if (btn) btn.setAttribute('aria-expanded', 'false');
+}
+
+function togglePurchaseNewTip(row, show) {
+    const tip = row.querySelector('.pr-new-tip');
+    const btn = row.querySelector('.pr-new-btn');
+    const open = typeof show === 'boolean' ? show : tip.classList.contains('hidden');
+    tip.classList.toggle('hidden', !open);
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+
+// Hover (apenas dispositivos com mouse)
+document.addEventListener('mouseover', (e) => {
+    if (!window.matchMedia('(hover: hover)').matches) return;
+    const btn = e.target.closest && e.target.closest('.pr-new-btn');
+    if (btn) togglePurchaseNewTip(btn.closest('.purchase-row'), true);
+});
+document.addEventListener('mouseout', (e) => {
+    if (!window.matchMedia('(hover: hover)').matches) return;
+    const btn = e.target.closest && e.target.closest('.pr-new-btn');
+    if (btn && !btn.contains(e.relatedTarget)) closePurchaseNewTip(btn.closest('.purchase-row'));
+});
+
+// Clique/toque alterna; clicar fora fecha
+document.addEventListener('click', (e) => {
+    const btn = e.target.closest && e.target.closest('.pr-new-btn');
+    document.querySelectorAll('.purchase-row').forEach(r => {
+        if (!btn || r !== btn.closest('.purchase-row')) closePurchaseNewTip(r);
+    });
+    if (!btn) return;
+    const row = btn.closest('.purchase-row');
+    // No desktop o hover já abriu: o clique mantém aberto; no toque alterna
+    if (window.matchMedia('(hover: hover)').matches) togglePurchaseNewTip(row, true);
+    else togglePurchaseNewTip(row);
+});
+
+// Destaque visual (borda vermelha + aviso) no campo de unidade
+function setPurchaseUnitError(row, show) {
+    const unitEl = row.querySelector('.pr-unit');
+    const msg = row.querySelector('.pr-unit-msg');
+    unitEl.classList.toggle('pr-invalid', !!show);
+    if (msg) msg.classList.toggle('hidden', !show);
+}
+
+// Substitua a função updatePurchaseRowCost existente por esta:
+function updatePurchaseRowCost(row) {
+    const qty = parseQuantityInput(row.querySelector('.pr-qty').value);
+    const rawInputVal = parseCurrencyInput(row.querySelector('.pr-total').value);
+    const isUnitPrice = row.querySelector('.pr-unit-price-toggle').checked;
+    const priceLabel = row.querySelector('.pr-price-label');
+    const costInfoEl = row.querySelector('.pr-cost');
+    const unit = row.querySelector('.pr-unit').value;
+
+    let calculatedTotal = 0;
+
+    if (isUnitPrice) {
+        if (priceLabel) priceLabel.textContent = 'Valor Unitário (R$)';
+        if (qty > 0 && rawInputVal > 0) {
+            // Se for GR ou ML, o valor unitário inserido refere-se ao KG ou Litro (1000 unidades base)
+            if (unit === 'GR' || unit === 'ML') {
+                calculatedTotal = (qty / 1000) * rawInputVal;
+            } else {
+                calculatedTotal = qty * rawInputVal;
+            }
+            costInfoEl.textContent = 'Total calculado: ' + formatCurrency(calculatedTotal);
+            costInfoEl.classList.remove('hidden');
+        } else {
+            costInfoEl.classList.add('hidden');
+        }
+    } else {
+        if (priceLabel) priceLabel.textContent = 'Valor Total Pago (R$)';
+        if (qty > 0 && rawInputVal > 0) {
+            calculatedTotal = rawInputVal;
+            const unitCost = rawInputVal / qty;
+            costInfoEl.textContent = 'Custo unitário: ' + formatUnitCost(unitCost) + (unit ? ' / ' + unit.toLowerCase() : '');
+            costInfoEl.classList.remove('hidden');
+        } else {
+            costInfoEl.classList.add('hidden');
+        }
+    }
+    updatePurchaseTotals();
+}
+function updatePurchaseTotals() {
+    const rows = document.querySelectorAll('#purchase-rows .purchase-row');
+    let cents = 0;
+    let count = 0;
+    rows.forEach(row => {
+        const qty = parseQuantityInput(row.querySelector('.pr-qty').value);
+        const rawInputVal = parseCurrencyInput(row.querySelector('.pr-total').value);
+        const isUnitPrice = row.querySelector('.pr-unit-price-toggle').checked;
+        const unit = row.querySelector('.pr-unit').value;
+        
+        let rowTotal = 0;
+        if (isUnitPrice) {
+            if (unit === 'GR' || unit === 'ML') {
+                rowTotal = (qty / 1000) * rawInputVal;
+            } else {
+                rowTotal = qty * rawInputVal;
+            }
+        } else {
+            rowTotal = rawInputVal;
+        }
+
+        cents += Math.round(rowTotal * 100);
+        if (row.querySelector('.pr-name').value.trim()) count++;
+    });
+    const totalEl = document.getElementById('purchase-total');
+    const countEl = document.getElementById('purchase-count');
+    if (totalEl) totalEl.textContent = formatCurrency(cents / 100);
+    if (countEl) countEl.textContent = count + (count === 1 ? ' item' : ' itens');
+}
+
+// Mantém pelo menos uma linha na compra
+function refreshPurchaseUI() {
+    const rows = document.querySelectorAll('#purchase-rows .purchase-row');
+    rows.forEach(r => { r.querySelector('.pr-remove').disabled = rows.length <= 1; });
+}
+
+// ----- Autocomplete (mesma fonte de dados e visual do autocomplete existente) -----
+function ensurePurchaseAc() {
+    if (purchaseAc.el) return purchaseAc.el;
+    const el = document.createElement('div');
+    el.id = 'purchase-autocomplete';
+    // Fica no <body> com position: fixed para não ser cortado pela área rolável do modal
+    el.className = 'hidden fixed bg-white border border-slate-200 rounded-xl shadow-lg text-slate-800 text-sm max-h-48 overflow-y-auto z-[70]';
+    el.addEventListener('mousedown', (e) => {
+        e.preventDefault(); // mantém o foco no campo
+        const opt = e.target.closest('.autocomplete-item');
+        if (opt) pickPurchaseName(opt.getAttribute('data-value'));
+    });
+    document.body.appendChild(el);
+    purchaseAc.el = el;
+    return el;
+}
+
+function showPurchaseAutocomplete(input) {
+    const el = ensurePurchaseAc();
+    // Campo vazio: a lista permanece oculta (nunca abre sozinha)
+    if (!input.value.trim()) {
+        hidePurchaseAutocomplete();
+        return;
+    }
+    const q = normalizeName(input.value);
+    const names = [];
+    const seen = new Set();
+    (itemsList || []).forEach(item => {
+        const name = (item.titulo || item.title || item.nome || '').trim();
+        const key = name.toLowerCase();
+        if (!name || seen.has(key)) return;
+        if (q && !normalizeName(name).includes(q)) return;
+        seen.add(key);
+        names.push(name);
+    });
+    // nada a sugerir, ou o texto já é exatamente o único resultado
+    if (names.length === 0 || (names.length === 1 && normalizeName(names[0]) === q)) {
+        hidePurchaseAutocomplete();
+        return;
+    }
+    el.innerHTML = names.map(n => '<div class="autocomplete-item hover:bg-brand-50 hover:text-brand-700 cursor-pointer p-2.5" data-value="' + escapeHtml(n) + '">' + escapeHtml(n) + '</div>').join('');
+    purchaseAc.input = input;
+    purchaseAc.active = -1;
+
+    const r = input.getBoundingClientRect();
+    el.style.left = r.left + 'px';
+    el.style.width = r.width + 'px';
+    el.style.top = (r.bottom + 4) + 'px';
+    el.classList.remove('hidden');
+    const h = el.offsetHeight;
+    if (r.bottom + 4 + h > window.innerHeight - 8 && r.top - 4 - h > 8) {
+        el.style.top = (r.top - 4 - h) + 'px'; // abre para cima se faltar espaço
+    }
+}
+
+function hidePurchaseAutocomplete() {
+    if (purchaseAc.el) purchaseAc.el.classList.add('hidden');
+    purchaseAc.input = null;
+    purchaseAc.active = -1;
+}
+
+function pickPurchaseName(value) {
+    const input = purchaseAc.input;
+    if (!input) return;
+    const row = input.closest('.purchase-row');
+    input.value = value;
+    input.classList.remove('pr-invalid');
+    hidePurchaseAutocomplete();
+    syncPurchaseRowItem(row);
+    updatePurchaseRowCost(row);
+    updatePurchaseTotals();
+    row.querySelector('.pr-qty').focus(); // segue o fluxo: próximo campo
+}
+
+function movePurchaseAcActive(delta) {
+    const opts = purchaseAc.el.querySelectorAll('.autocomplete-item');
+    if (!opts.length) return;
+    const n = opts.length;
+    purchaseAc.active = purchaseAc.active < 0 ? (delta > 0 ? 0 : n - 1) : (purchaseAc.active + delta + n) % n;
+    opts.forEach((o, i) => o.classList.toggle('bg-brand-50', i === purchaseAc.active));
+    opts[purchaseAc.active].scrollIntoView({ block: 'nearest' });
+}
+
+// ----- Eventos (delegados: as linhas são criadas dinamicamente) -----
+document.addEventListener('input', (e) => {
+    const t = e.target;
+    const row = t.closest && t.closest('.purchase-row');
+    if (!row) return;
+    t.classList.remove('pr-invalid');
+    if (t.classList.contains('pr-name')) {
+        syncPurchaseRowItem(row);
+        showPurchaseAutocomplete(t);
+    }
+    updatePurchaseRowCost(row);
+    updatePurchaseTotals();
+});
+
+document.addEventListener('change', (e) => {
+    const t = e.target;
+    const row = t.closest && t.closest('.purchase-row');
+    if (!row) return;
+    t.classList.remove('pr-invalid');
+    if (t.classList.contains('pr-unit')) setPurchaseUnitError(row, false);
+    updatePurchaseRowCost(row);
+});
+
+// A lista NÃO abre ao focar/abrir o modal; só ao clicar no campo (com texto) ou digitar
+document.addEventListener('click', (e) => {
+    if (e.target.classList && e.target.classList.contains('pr-name')) showPurchaseAutocomplete(e.target);
+});
+
+document.addEventListener('focusout', (e) => {
+    if (e.target.classList && e.target.classList.contains('pr-name')) hidePurchaseAutocomplete();
+});
+
+document.addEventListener('keydown', (e) => {
+    const t = e.target;
+    if (!t.classList || !t.classList.contains('pr-name')) return;
+    const open = purchaseAc.el && !purchaseAc.el.classList.contains('hidden') && purchaseAc.input === t;
+    if (!open) {
+        if (e.key === 'ArrowDown') showPurchaseAutocomplete(t);
+        return;
+    }
+    if (e.key === 'ArrowDown') { e.preventDefault(); movePurchaseAcActive(1); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); movePurchaseAcActive(-1); }
+    else if (e.key === 'Escape') { e.preventDefault(); hidePurchaseAutocomplete(); }
+    else if (e.key === 'Enter' && purchaseAc.active >= 0) {
+        e.preventDefault();
+        const opt = purchaseAc.el.querySelectorAll('.autocomplete-item')[purchaseAc.active];
+        if (opt) pickPurchaseName(opt.getAttribute('data-value'));
+    }
+});
+
+document.addEventListener('click', (e) => {
+    const btn = e.target.closest && e.target.closest('.pr-remove');
+    if (!btn || btn.disabled) return;
+    const row = btn.closest('.purchase-row');
+    if (!row) return;
+    hidePurchaseAutocomplete();
+    row.remove();
+    refreshPurchaseUI();
+    updatePurchaseTotals();
+});
+
+// A lista flutuante acompanha o campo: se a tela rolar/redimensionar, fecha
+document.addEventListener('scroll', (e) => {
+    if (purchaseAc.el && e.target !== purchaseAc.el) hidePurchaseAutocomplete();
+}, true);
+window.addEventListener('resize', hidePurchaseAutocomplete);
+window.addEventListener('resize', hideRecipeAutocomplete);
+document.addEventListener('scroll', event => {
+    if (recipeAutocomplete.el && event.target !== recipeAutocomplete.el) hideRecipeAutocomplete();
+}, true);
+
+// ----- Validação -----
+function collectPurchaseEntries() {
+    const rows = Array.from(document.querySelectorAll('#purchase-rows .purchase-row'));
+    const entries = [];
+    let firstInvalid = null;
+    let message = '';
+    const flag = (el, msg) => {
+        el.classList.add('pr-invalid');
+        if (el.classList.contains('pr-unit')) setPurchaseUnitError(el.closest('.purchase-row'), true);
+        if (!firstInvalid) { firstInvalid = el; message = msg; }
+    };
+
+    rows.forEach((row, idx) => {
+        const nameEl = row.querySelector('.pr-name');
+        const unitEl = row.querySelector('.pr-unit');
+        const qtyEl = row.querySelector('.pr-qty');
+        const totalEl = row.querySelector('.pr-total');
+        const rawName = nameEl.value.trim();
+
+        // linha totalmente vazia é ignorada
+        if (!rawName && !qtyEl.value.trim() && !totalEl.value.trim()) return;
+
+        const n = idx + 1;
+        const qty = parseQuantityInput(qtyEl.value);
+        const total = parseCurrencyInput(totalEl.value);
+        if (!rawName) flag(nameEl, 'Linha ' + n + ': informe o item.');
+        // Item novo (não cadastrado): a unidade de medida é obrigatória
+        if (rawName && !findItemByName(rawName) && !unitEl.value) {
+            flag(unitEl, 'Linha ' + n + ': selecione a unidade de medida do item novo "' + formatItemName(rawName) + '".');
+        }
+        if (qty <= 0) flag(qtyEl, 'Linha ' + n + ': informe uma quantidade maior que zero.');
+        if (total <= 0) flag(totalEl, 'Linha ' + n + ': informe o valor total pago.');
+
+        entries.push({ row, rowNumber: n, name: formatItemName(rawName), unit: unitEl.value, qty, total });
+    });
+
+    // O mesmo item novo em duas linhas precisa ter a mesma unidade
+    const newUnits = new Map();
+    entries.forEach(en => {
+        if (!en.name || !en.unit || findItemByName(en.name)) return;
+        const key = normalizeName(en.name);
+        const prev = newUnits.get(key);
+        if (!prev) newUnits.set(key, en);
+        else if (prev.unit !== en.unit) {
+            flag(en.row.querySelector('.pr-unit'), 'Linha ' + en.rowNumber + ': "' + en.name + '" aparece com unidades diferentes.');
+        }
+    });
+
+    return { entries, firstInvalid, message };
+}
+
+// ----- Gravação -----
+// Grava UM item da compra. Retorna true se o item foi criado agora.
+async function savePurchaseEntry(entry, createdAt) {
+    const unitCost = entry.total / entry.qty;
+    const existing = findItemByName(entry.name);
+
+    if (existing) {
+        const oldStock = Number(existing.quantidade) || 0;
+        const oldCost = Number(existing.custo_medio) || 0;
+        const oldStatus = existing.status;
+        const newStock = oldStock + entry.qty;
+        const newAvg = ((oldStock * oldCost) + entry.total) / newStock; // custo médio ponderado
+
+        const upd = await supabaseClient.from('itens').update({
+            quantidade: newStock,
+            custo_medio: newAvg,
+            status: 'ATIVO NO ESTOQUE'
+        }).eq('id', existing.id);
+        if (upd.error) throw upd.error;
+
+        const hist = await supabaseClient.from('historico').insert([{
+            item_id: existing.id,
+            user_id: currentUser.id,
+            tipo: 'ENTRADA',
+            quantidade: entry.qty,
+            valor_total: entry.total,
+            custo_unitario: unitCost,
+            created_at: createdAt
+        }]);
+        if (hist.error) {
+            // desfaz o saldo para não ficar um item atualizado sem histórico
+            await supabaseClient.from('itens').update({ quantidade: oldStock, custo_medio: oldCost, status: oldStatus }).eq('id', existing.id);
+            throw hist.error;
+        }
+
+        existing.quantidade = newStock;
+        existing.custo_medio = newAvg;
+        existing.status = 'ATIVO NO ESTOQUE';
+        return false;
+    }
+
+    // Item novo: cadastra automaticamente
+    const ins = await supabaseClient.from('itens').insert([{
+        id: generateId(),
+        codigo: generateItemCode(),
+        user_id: currentUser.id,
+        titulo: entry.name,
+        unidade: entry.unit,
+        quantidade: entry.qty,
+        custo_medio: unitCost,
+        status: 'ATIVO NO ESTOQUE'
+    }]).select().single();
+    if (ins.error) throw ins.error;
+    const created = ins.data;
+
+    const hist = await supabaseClient.from('historico').insert([{
+        item_id: created.id,
+        user_id: currentUser.id,
+        tipo: 'ENTRADA',
+        quantidade: entry.qty,
+        valor_total: entry.total,
+        custo_unitario: unitCost,
+        created_at: createdAt
+    }]);
+    if (hist.error) {
+        await supabaseClient.from('itens').delete().eq('id', created.id);
+        throw hist.error;
+    }
+
+    // entra na lista em memória: se o mesmo item aparecer noutra linha, ele é tratado como existente
+    itemsList.unshift(normalizeItem(created));
+    return true;
+}
+
+function setPurchaseSaving(saving) {
+    purchaseSaving = saving;
+    const submit = document.getElementById('purchase-submit');
+    const cancel = document.getElementById('purchase-cancel');
+    const label = document.getElementById('purchase-submit-label');
+    const rows = document.getElementById('purchase-rows');
+    if (submit) submit.disabled = saving;
+    if (cancel) cancel.disabled = saving;
+    if (label) label.textContent = saving ? 'Salvando...' : 'Finalizar Compra';
+    if (rows) rows.classList.toggle('is-saving', saving);
+}
+
+async function finalizePurchase() {
+    if (purchaseSaving) return;
+    if (!supabaseClient || !currentUser) {
+        showToast('Supabase não disponível.', 'error');
+        return;
+    }
+
+    const { entries, firstInvalid, message } = collectPurchaseEntries();
+    if (firstInvalid) {
+        showToast(message, 'error');
+        firstInvalid.focus();
+        return;
+    }
+    if (entries.length === 0) {
+        showToast('Adicione pelo menos um item à compra.', 'error');
+        return;
+    }
+
+    setPurchaseSaving(true);
+    const purchaseDate = new Date().toISOString(); // mesma data/hora para todos os itens da compra
+    const done = [];
+    let createdCount = 0;
+    let current = null;
+
+    try {
+        for (const entry of entries) {
+            current = entry;
+            if (await savePurchaseEntry(entry, purchaseDate)) createdCount++;
+            done.push(entry);
+        }
+    } catch (err) {
+        console.error(err);
+        const reason = err && err.message ? err.message : String(err);
+        // Sincroniza com o banco e remove da lista o que já foi gravado, para não duplicar ao tentar de novo
+        await loadItems();
+        await loadHomeDashboard();
+        done.forEach(en => en.row.remove());
+        refreshPurchaseUI();
+        updatePurchaseTotals();
+        setPurchaseSaving(false);
+        if (done.length > 0) {
+            showToast('Compra parcial: ' + done.length + ' de ' + entries.length + ' item(ns) gravado(s). Falha em "' + (current ? current.name : '?') + '": ' + reason + '. Os já gravados saíram da lista; corrija e finalize novamente.', 'error');
+        } else {
+            showToast('Erro ao salvar a compra: ' + reason, 'error');
+        }
+        return;
+    }
+
+    const totalCents = entries.reduce((acc, en) => acc + Math.round(en.total * 100), 0);
+    closeModal('modal-new-purchase');
+    resetPurchaseForm();
+    setPurchaseSaving(false);
+    await loadItems();          // atualiza tabela, cards e autocomplete
+    await loadHomeDashboard();  // atualiza atividades recentes
+
+    let msg = 'Compra registrada: ' + entries.length + (entries.length === 1 ? ' item' : ' itens') + ' · ' + formatCurrency(totalCents / 100);
+    if (createdCount > 0) msg += ' (' + createdCount + (createdCount === 1 ? ' novo cadastrado' : ' novos cadastrados') + ')';
+    showToast(msg, 'success');
+}
+
+function openItemDetailsModal(id) {
+
+    const item = itemsList.find(i => String(i.id) === String(id));
+    if (!item) return;
+    currentItemId = item.id;
+
+    document.getElementById('modal-item-title-display').textContent = item.titulo || item.title || '-';
+    document.getElementById('modal-item-unit-badge').textContent = item.unidade || item.unit || '-';
+    const idEl = document.getElementById('modal-item-id');
+    if (idEl) idEl.textContent = item.codigo || item.id || 'ID';
+    
+    document.getElementById('edit-item-title').value = item.titulo || item.title || '';
+    document.getElementById('edit-item-category').value = normalizeCategory(item.categoria) || '';
+    document.getElementById('edit-item-unit').value = item.unidade || item.unit || '';
+    applyEditCategoryRules();
+
+    // Cards do topo (Saldo, Custo Médio, Status)
+    updateModalStatsUI(item);
+
+    document.getElementById('mov-qty').value = '';
+    const priceEl = document.getElementById('mov-total-price');
+    if (priceEl) priceEl.value = '';
+    const movUnitToggle = document.getElementById('mov-unit-price-toggle');
+    if (movUnitToggle) movUnitToggle.checked = false;
+    const dateEl = document.getElementById('mov-date');
+    if (dateEl) {
+        const now = new Date();
+        const pad = n => String(n).padStart(2, '0');
+        dateEl.value = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+    }
+    setMovType('IN');
+
+    // Item antigo sem categoria: já abre a edição para a categoria ser definida
+    setEditSection(!normalizeCategory(item.categoria));
+    loadItemHistory(item.id);
+
+    openModal('modal-item-details');
+    if (window.lucide) lucide.createIcons();
+}
+async function loadItemHistory(itemId) {
+    const tbody = document.getElementById('history-table-body');
+    tbody.innerHTML = '';
+    let movements = [];
+    if (!supabaseClient || !currentUser) {
+        showToast('Supabase não disponível.', 'error');
+        return;
+    }
+    try {
+        const { data, error } = await supabaseClient
+            .from('historico')
+            .select('*')
+            .eq('item_id', itemId)
+            .order('created_at', { ascending: false });
+        if (error) throw error;
+        movements = data || [];
+    } catch (e) {
+        console.error(e);
+        showToast('Erro ao carregar histórico: ' + (e && e.message ? e.message : e), 'error');
+    }
+
+    movements.forEach(mov => {
+        const tr = document.createElement('tr');
+        const date = new Date(mov.created_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+        const typeLabel = mov.tipo === 'ENTRADA' ? 'Entrada' : 'Saída';
+        const typeClass = mov.tipo === 'ENTRADA' ? 'text-emerald-600' : 'text-rose-600';
+        const observation = String(mov.observacao || mov.motivo || '').trim();
+        tr.innerHTML = `
+            <td class="p-2.5 text-center">${date}</td>
+            <td class="p-2.5 text-center">
+                <span class="font-semibold ${typeClass}">${typeLabel}</span>
+                ${observation ? `<span class="block text-[10px] text-slate-500">${escapeHtml(observation)}</span>` : ''}
+            </td>
+            <td class="p-2.5 text-center">${Number(mov.quantidade || 0).toLocaleString('pt-BR')}</td>
+            <td class="p-2.5 text-center">${formatUnitCost(mov.custo_unitario || 0)}</td>
+            <td class="p-2.5 text-center">${formatCurrency(mov.valor_total || 0)}</td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
+
+// Embalagem: unidade fixa em UN (campo bloqueado) também na edição do cadastro
+function applyEditCategoryRules() {
+    const category = normalizeCategory(document.getElementById('edit-item-category').value);
+    const unitSelect = document.getElementById('edit-item-unit');
+    if (category === 'EMBALAGEM') {
+        unitSelect.value = 'UN';
+        unitSelect.disabled = true;
+    } else {
+        unitSelect.disabled = false;
+    }
+}
+
+async function saveItemEdits() {
+    if (!currentItemId) return;
+    const rawTitle = document.getElementById('edit-item-title').value.trim();
+    const title = rawTitle.charAt(0).toUpperCase() + rawTitle.slice(1);
+    const category = normalizeCategory(document.getElementById('edit-item-category').value);
+    const unit = category === 'EMBALAGEM' ? 'UN' : document.getElementById('edit-item-unit').value;
+    if (!title) {
+        showToast('Título inválido.', 'error');
+        return;
+
+    }
+    const item = itemsList.find(i => String(i.id) === String(currentItemId));
+    if (!item) return;
+
+    // Trocar a unidade de um item que já tem movimentações mudaria o significado do saldo e do custo
+    const hasMovements = (Number(item.quantidade) || 0) > 0 || item.status === 'ATIVO NO ESTOQUE';
+    if (category === 'EMBALAGEM' && item.unidade && item.unidade !== 'UN' && hasMovements) {
+        showToast('Este item já tem movimentações em ' + item.unidade + ' e não pode virar Embalagem (UN) sem corromper o saldo e o custo.', 'error');
+        return;
+    }
+
+    const previous = { titulo: item.titulo, unidade: item.unidade, categoria: item.categoria || null };
+    item.titulo = title;
+    item.unidade = unit;
+    item.categoria = category;
+
+    if (supabaseClient && !currentUser.id.startsWith('offline-') && !String(item.id).startsWith('local-')) {
+        try {
+            const { error } = await supabaseClient.from('itens')
+                .update({ titulo: title, unidade: unit, categoria: category })
+                .eq('id', item.id)
+                .eq('user_id', currentUser.id);
+            if (error) throw error;
+        } catch (e) {
+            console.error(e);
+            item.titulo = previous.titulo;
+            item.unidade = previous.unidade;
+            item.categoria = previous.categoria;
+            showToast('Erro ao atualizar o cadastro: ' + (e && e.message ? e.message : e), 'error');
+            return;
+        }
+    } else {
+        saveItemsLocalFallback();
+    }
+
+    document.getElementById('modal-item-title-display').textContent = title;
+    document.getElementById('modal-item-unit-badge').textContent = unit;
+    updateModalStatsUI(item);
+    renderItems();
+    populateItemsDatalist();
+    showToast('Informações atualizadas.', 'success');
+    setEditSection(false);
+}
+
+async function registerMovement() {
+    if (!currentItemId) return;
+    const item = itemsList.find(i => String(i.id) === String(currentItemId));
+    if (!item) return;
+
+    const type = document.getElementById('mov-type').value === 'IN' ? 'ENTRADA' : 'SAIDA';
+    const qty = parseQuantityInput(document.getElementById('mov-qty').value);
+    const previousState = {
+        quantidade: Number(item.quantidade) || 0,
+        custo_medio: Number(item.custo_medio) || 0,
+        status: item.status
+    };
+    let totalCost = 0;
+    if (type === 'ENTRADA') {
+        const rawValue = parseCurrencyInput(document.getElementById('mov-total-price').value);
+        if (rawValue < 0) {
+            showToast('Valor inválido.', 'error');
+            return;
+        }
+        const isUnitPrice = document.getElementById('mov-unit-price-toggle').checked;
+        totalCost = calcEntryTotal(qty, rawValue, item.unidade, isUnitPrice);
+    } else {
+        // Saída: valor_total = quantidade × custo médio atual (nunca vem de digitação)
+        totalCost = calcExitTotal(qty, item.custo_medio);
+    }
+
+    if (qty <= 0) {
+        showToast('Quantidade inválida.', 'error');
+        return;
+    }
+
+    if (type === 'SAIDA' && qty > (item.quantidade || 0)) {
+        showToast('Estoque insuficiente.', 'error');
+        return;
+    }
+
+    let observation = null;
+    if (type === 'SAIDA' && normalizeCategory(item.categoria) === 'PRODUTO_PRONTO') {
+        let decision;
+        try {
+            decision = await requestManualExitDecision();
+        } catch (error) {
+            console.error('Erro ao abrir a decisão da saída manual:', error);
+            showToast('Não foi possível solicitar a confirmação da saída.', 'error');
+            return;
+        }
+        if (decision.type === 'cancel') return;
+        if (decision.type === 'sale') {
+            closeModal('modal-item-details');
+            window.setTimeout(() => openSaleModal(item.id, qty), 220);
+            return;
+        }
+        observation = decision.reason;
+    }
+
+    const movementDateInput = document.getElementById('mov-date');
+    let movementDate = new Date();
+    if (movementDateInput && movementDateInput.value) {
+        const parsed = new Date(movementDateInput.value);
+        if (!isNaN(parsed.getTime())) movementDate = parsed;
+    }
+    const movementDateIso = movementDate.toISOString();
+
+    const unitCost = type === 'ENTRADA' ? (qty > 0 ? totalCost / qty : 0) : (item.custo_medio || 0);
+    const movement = {
+        id: 'mov-' + Date.now(),
+        item_id: item.id,
+        user_id: currentUser.id,
+        tipo: type,
+        quantidade: qty,
+        valor_total: totalCost,
+        custo_unitario: unitCost,
+        observacao: observation,
+        created_at: movementDateIso
+    };
+
+    if (type === 'ENTRADA') {
+        const oldStock = item.quantidade || 0;
+        const oldCost = item.custo_medio || 0;
+        const newStock = oldStock + qty;
+        const newAvg = newStock > 0 ? ((oldStock * oldCost) + (qty * unitCost)) / newStock : unitCost;
+        item.quantidade = newStock;
+        item.custo_medio = newAvg;
+        item.status = 'ATIVO NO ESTOQUE';
+    } else {
+        item.quantidade = (item.quantidade || 0) - qty;
+        if (item.quantidade <= 0) item.quantidade = 0;
+    }
+
+    if (supabaseClient && !currentUser.id.startsWith('offline-') && !String(item.id).startsWith('local-')) {
+        try {
+            const { data: historyRow, error: historyError } = await supabaseClient.from('historico').insert([{
+                item_id: item.id,
+                user_id: currentUser.id,
+                tipo: type,
+                quantidade: Number(qty) || 0,
+                valor_total: Number(movement.valor_total) || 0,
+                custo_unitario: Number(unitCost) || 0,
+                observacao: observation,
+                created_at: movementDateIso
+            }]).select('id').single();
+            if (historyError) throw historyError;
+
+            // Na saída o custo médio não muda: só o saldo é reduzido
+            const itemUpdate = type === 'ENTRADA'
+                ? {
+                    quantidade: Number(item.quantidade) || 0,
+                    custo_medio: Number(item.custo_medio) || 0,
+                    status: item.status
+                }
+                : { quantidade: Number(item.quantidade) || 0 };
+            const { error: updateError } = await supabaseClient.from('itens').update(itemUpdate)
+                .eq('id', item.id)
+                .eq('user_id', currentUser.id);
+            if (updateError) {
+                const { error: rollbackError } = await supabaseClient.from('historico').delete()
+                    .eq('id', historyRow.id)
+                    .eq('user_id', currentUser.id);
+                if (rollbackError) console.error('Erro ao desfazer histórico da movimentação:', rollbackError);
+                throw updateError;
+            }
+        } catch (e) {
+            console.error('Erro ao registrar movimentação:', e);
+            item.quantidade = previousState.quantidade;
+            item.custo_medio = previousState.custo_medio;
+            item.status = previousState.status;
+            await loadItems();
+            showToast('Erro ao registrar movimentação: ' + (e && e.message ? e.message : e), 'error');
+            return;
+        }
+    } else {
+        const stored = localStorage.getItem('movements_' + item.id);
+        const list = stored ? JSON.parse(stored) : [];
+        list.unshift(movement);
+        localStorage.setItem('movements_' + item.id, JSON.stringify(list));
+        saveItemsLocalFallback();
+    }
+
+    updateModalStatsUI(item);
+
+    document.getElementById('mov-qty').value = '';
+    document.getElementById('mov-total-price').value = '';
+    document.getElementById('mov-unit-price-toggle').checked = false;
+    updateMovPriceLabel();
+    const dateReset = document.getElementById('mov-date');
+    if (dateReset) {
+        const now = new Date();
+        const pad = n => String(n).padStart(2, '0');
+        dateReset.value = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+    }
+    updateMovPreview();
+
+    loadItemHistory(item.id);
+    renderItems();
+    updateStats();
+    populateItemsDatalist();
+    await loadHomeDashboard();
+    showToast('Movimentação registrada.', 'success');
+}
+
+async function deleteCurrentItem() {
+    if (!currentItemId) return;
+    if (!confirm('Tem certeza que deseja excluir este item?')) return;
+    const item = itemsList.find(i => String(i.id) === String(currentItemId));
+    itemsList = itemsList.filter(i => String(i.id) !== String(currentItemId));
+    populateItemsDatalist();
+
+    if (supabaseClient && !currentUser.id.startsWith('offline-') && item && !String(item.id).startsWith('local-')) {
+        try {
+            await supabaseClient.from('itens').delete().eq('id', item.id);
+        } catch (e) { console.error(e); }
+    } else {
+        saveItemsLocalFallback();
+    }
+
+    closeModal('modal-item-details');
+    currentItemId = null;
+    renderItems();
+    updateStats();
+    populateItemsDatalist();
+    showToast('Item excluído.', 'info');
+}
+
+function openSqlModal() {
+    openModal('modal-sql');
+    if (window.lucide) lucide.createIcons();
+}
+
+function copySql(id) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const text = el.textContent;
+    navigator.clipboard.writeText(text).then(() => {
+        showToast('SQL copiado para a área de transferência.', 'success');
+    }).catch(() => {
+        showToast('Não foi possível copiar.', 'error');
+    });
+}
+
+async function downloadProjectZip() {
+    if (!window.JSZip) {
+        showToast('JSZip não carregado.', 'error');
+        return;
+    }
+    const zip = new JSZip();
+    zip.file('index.html', document.documentElement.outerHTML);
+    zip.file('README.md', '# StockUnit Enterprise');
+    const content = await zip.generateAsync({ type: 'blob' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(content);
+    a.download = 'projeto_estoque.zip';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    showToast('Download do ZIP iniciado!', 'success');
+}
+
+function updateStats() {
+    const totalItemsEl = document.getElementById('stat-total-items');
+    const activeItemsEl = document.getElementById('stat-active-items');
+    const emptyItemsEl = document.getElementById('stat-empty-items');
+    const totalValueEl = document.getElementById('stat-total-value');
+
+    if (totalItemsEl) totalItemsEl.textContent = itemsList.length;
+    const active = itemsList.filter(i => i.quantidade > 0).length;
+    if (activeItemsEl) activeItemsEl.textContent = active;
+    const empty = itemsList.filter(i => i.status === 'SEM MOVIMENTAÇÕES' || i.status === 'CADASTRO PENDENTE' || i.quantidade == 0).length;
+    if (emptyItemsEl) emptyItemsEl.textContent = empty;
+    const totalVal = itemsList.reduce((acc, curr) => acc + ((curr.quantidade || 0) * (curr.custo_medio || 0)), 0);
+    if (totalValueEl) totalValueEl.textContent = formatCurrency(totalVal);
+}
+
+
+function showToast(msg, type = 'info') {
+    const container = document.getElementById('toast-container');
+
+    const toast = document.createElement('div');
+
+    let bgClass = 'bg-slate-900 text-white border-slate-700';
+    if (type === 'success') bgClass = 'bg-emerald-700 text-white border-emerald-600';
+    if (type === 'error') bgClass = 'bg-rose-700 text-white border-rose-600';
+
+    toast.className = `p-3.5 rounded-xl border shadow-xl text-xs font-medium flex items-center justify-between pointer-events-auto transition-all transform translate-y-2 opacity-0 ${bgClass}`;
+    toast.innerHTML = `
+        <span>${escapeHtml(msg)}</span>
+        <button onclick="this.parentElement.remove()" class="ml-3 text-white/70 hover:text-white">&times;</button>
+    `;
+
+    container.appendChild(toast);
+
+    setTimeout(() => {
+        toast.classList.remove('translate-y-2', 'opacity-0');
+    }, 10);
+
+    setTimeout(() => {
+        toast.classList.add('opacity-0');
+        setTimeout(() => toast.remove(), 300);
+    }, 4000);
+}
+
+function sortRelatorio(col) {
+    if (relatorioSortCol === col) {
+        relatorioSortDir = relatorioSortDir === 'desc' ? 'asc' : 'desc';
+    } else {
+        relatorioSortCol = col;
+        relatorioSortDir = 'desc'; // primeiro clique: decrescente
+    }
+    applyRelatorioSort();
+    renderRelatorioTable(relatorioData);
+    updateSortIndicators();
+}
+
+function applyRelatorioSort() {
+    if (!relatorioSortCol || !relatorioData) return;
+    const dir = relatorioSortDir === 'desc' ? -1 : 1;
+    relatorioData.sort((a, b) => {
+        let va, vb;
+        const itemA = a.itens || (itemsList || []).find(i => String(i.id) === String(a.item_id)) || {};
+        const itemB = b.itens || (itemsList || []).find(i => String(i.id) === String(b.item_id)) || {};
+        switch (relatorioSortCol) {
+            case 'created_at':
+                va = new Date(a.created_at).getTime();
+                vb = new Date(b.created_at).getTime();
+                break;
+            case 'codigo':
+                va = (itemA.codigo || itemA.id || a.item_id || '').toString().toLowerCase();
+                vb = (itemB.codigo || itemB.id || b.item_id || '').toString().toLowerCase();
+                break;
+            case 'titulo':
+                va = (itemA.titulo || itemA.nome || '').toLowerCase();
+                vb = (itemB.titulo || itemB.nome || '').toLowerCase();
+                break;
+            case 'quantidade':
+                va = Number(a.quantidade || 0);
+                vb = Number(b.quantidade || 0);
+                break;
+            case 'valor_total':
+                va = Number(a.valor_total || 0);
+                vb = Number(b.valor_total || 0);
+                break;
+            case 'custo_unitario':
+                va = Number(a.custo_unitario || 0);
+                vb = Number(b.custo_unitario || 0);
+                break;
+            default:
+                va = 0; vb = 0;
+        }
+        if (va < vb) return -1 * dir;
+        if (va > vb) return 1 * dir;
+        return 0;
+    });
+}
+
+function renderRelatorioTable(movs) {
+    const tbody = document.getElementById('relatorio-table-body');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+    (movs || []).forEach(mov => {
+        const item = mov.itens || (itemsList || []).find(i => String(i.id) === String(mov.item_id)) || {};
+        const code = item.codigo || item.id || mov.item_id;
+        const name = item.titulo || item.nome || '-';
+        const isEntrada = mov.tipo === 'ENTRADA' || mov.tipo === 'CADASTRO';
+        const typeLabel = isEntrada ? 'Entrada' : 'Saída';
+        const badgeClass = isEntrada ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-rose-50 text-rose-700 border-rose-200';
+        const date = new Date(mov.created_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td class="px-3 sm:px-6 py-3 whitespace-nowrap">${date}</td>
+            <td class="hidden md:table-cell px-6 py-3 font-mono text-xs">${escapeHtml(code)}</td>
+            <td class="px-3 sm:px-6 py-3">${escapeHtml(name)}</td>
+            <td class="px-3 sm:px-6 py-3 whitespace-nowrap"><span class="px-2 py-0.5 border rounded text-[11px] font-medium ${badgeClass}">${typeLabel}</span></td>
+            <td class="px-3 sm:px-6 py-3 text-right whitespace-nowrap">${Number(mov.quantidade || 0).toLocaleString('pt-BR')} ${item.unidade || ''}</td>
+            <td class="px-3 sm:px-6 py-3 text-right whitespace-nowrap">${formatCurrency(mov.valor_total || 0)}</td>
+            <td class="px-3 sm:px-6 py-3 text-right whitespace-nowrap">${formatUnitCost(mov.custo_unitario || 0)}</td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
+
+function updateSortIndicators() {
+    const cols = ['created_at', 'codigo', 'titulo', 'quantidade', 'valor_total', 'custo_unitario'];
+    cols.forEach(c => {
+        const el = document.getElementById('sort-ind-' + c);
+        if (el) {
+            if (relatorioSortCol === c) {
+                el.textContent = relatorioSortDir === 'desc' ? '↓' : '↑';
+            } else {
+                el.textContent = '';
+            }
+        }
+    });
+}
+
+
+async function loadRelatorio() {
+    const tbody = document.getElementById('relatorio-table-body');
+    const empty = document.getElementById('relatorio-empty');
+    if (tbody) tbody.innerHTML = '';
+    if (!supabaseClient || !currentUser) {
+        showToast('Supabase não disponível.', 'error');
+        return;
+    }
+
+    const dataInicial = (document.getElementById('rep-data-inicial') || {}).value || '';
+    const dataFinal = (document.getElementById('rep-data-final') || {}).value || '';
+    const nomeFilter = ((document.getElementById('rep-nome') || {}).value || '').trim().toLowerCase();
+    const codigoFilter = ((document.getElementById('rep-codigo') || {}).value || '').trim().toLowerCase();
+    const tipoFilter = (document.getElementById('rep-tipo') || {}).value || 'TODOS';
+    const valorMin = parseFloat((document.getElementById('rep-valor-min') || {}).value);
+    const valorMax = parseFloat((document.getElementById('rep-valor-max') || {}).value);
+
+    try {
+        let query = supabaseClient
+            .from('historico')
+            .select('*, itens(codigo, titulo, unidade)')
+            .eq('user_id', currentUser.id)
+            .order('created_at', { ascending: false });
+
+        if (dataInicial) {
+            const start = new Date(dataInicial + 'T00:00:00');
+            query = query.gte('created_at', start.toISOString());
+        }
+        if (dataFinal) {
+            const end = new Date(dataFinal + 'T23:59:59');
+            query = query.lte('created_at', end.toISOString());
+        }
+        if (tipoFilter === 'ENTRADA') {
+            query = query.in('tipo', ['ENTRADA', 'CADASTRO']);
+        } else if (tipoFilter === 'SAIDA') {
+            query = query.eq('tipo', 'SAIDA');
+        }
+
+        let { data, error } = await query;
+        if (error) {
+            // Fallback: busca sem join e carrega itens separadamente
+            let q2 = supabaseClient
+                .from('historico')
+                .select('*')
+                .eq('user_id', currentUser.id)
+                .order('created_at', { ascending: false });
+            if (dataInicial) q2 = q2.gte('created_at', new Date(dataInicial + 'T00:00:00').toISOString());
+            if (dataFinal) q2 = q2.lte('created_at', new Date(dataFinal + 'T23:59:59').toISOString());
+            if (tipoFilter === 'ENTRADA') q2 = q2.in('tipo', ['ENTRADA', 'CADASTRO']);
+            else if (tipoFilter === 'SAIDA') q2 = q2.eq('tipo', 'SAIDA');
+            const r2 = await q2;
+            if (r2.error) throw r2.error;
+            data = r2.data || [];
+            const { data: itemsData } = await supabaseClient.from('itens').select('id, codigo, titulo, unidade').eq('user_id', currentUser.id);
+            const map = {};
+            (itemsData || []).forEach(it => { map[String(it.id)] = it; });
+            data = data.map(m => ({ ...m, itens: map[String(m.item_id)] || null }));
+        }
+
+        let movs = data || [];
+
+        movs = movs.filter(mov => {
+            const item = mov.itens || (itemsList || []).find(i => String(i.id) === String(mov.item_id)) || {};
+            const name = (item.titulo || item.nome || '').toLowerCase();
+            const code = String(item.codigo || item.id || mov.item_id || '').toLowerCase();
+            if (nomeFilter && !name.includes(nomeFilter)) return false;
+            if (codigoFilter && !code.includes(codigoFilter)) return false;
+            return true;
+        });
+
+        movs = movs.filter(mov => {
+            const val = Number(mov.valor_total || 0);
+            if (!isNaN(valorMin) && val < valorMin) return false;
+            if (!isNaN(valorMax) && val > valorMax) return false;
+            return true;
+        });
+
+        relatorioData = movs;
+
+        if (movs.length === 0) {
+            if (empty) empty.classList.remove('hidden');
+            updateRelatorioResumo([]);
+            updateSortIndicators();
+            updateRelatorioChart([]);
+            if (window.lucide) lucide.createIcons();
+            return;
+        }
+        if (empty) empty.classList.add('hidden');
+
+        applyRelatorioSort();
+        renderRelatorioTable(relatorioData);
+        updateRelatorioResumo(relatorioData);
+        updateSortIndicators();
+        updateRelatorioChart(relatorioData);
+        if (window.lucide) lucide.createIcons();
+    } catch (e) {
+        console.error(e);
+        showToast('Erro ao carregar relatório: ' + (e && e.message ? e.message : e), 'error');
+    }
+}
+
+
+function updateRelatorioResumo(movs) {
+    const totalEl = document.getElementById('rep-total-movimentado');
+    const opsEl = document.getElementById('rep-total-operacoes');
+    const total = (movs || []).reduce((acc, m) => acc + (Number(m.valor_total) || 0), 0);
+    if (totalEl) totalEl.textContent = formatCurrency(total);
+    if (opsEl) opsEl.textContent = (movs || []).length;
+}
+
+
+function limparFiltrosRelatorio() {
+    const ids = ['rep-data-inicial', 'rep-data-final', 'rep-nome', 'rep-codigo', 'rep-valor-min', 'rep-valor-max'];
+    ids.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+    });
+    const tipo = document.getElementById('rep-tipo');
+    if (tipo) tipo.value = 'TODOS';
+    loadRelatorio();
+}
+
+function exportarRelatorioCSV() {
+    if (!relatorioData || relatorioData.length === 0) {
+        showToast('Nenhum dado para exportar.', 'info');
+        return;
+    }
+    const header = ['Data/Hora', 'Código do Item', 'Nome do Item', 'Tipo', 'Quantidade', 'Valor Total Pago', 'Custo Unitário Calculado'];
+    const rows = relatorioData.map(mov => {
+        const item = mov.itens || (itemsList || []).find(i => String(i.id) === String(mov.item_id)) || {};
+        const code = item.codigo || item.id || mov.item_id;
+        const name = item.titulo || item.nome || '-';
+        const isEntrada = mov.tipo === 'ENTRADA' || mov.tipo === 'CADASTRO';
+        const typeLabel = isEntrada ? 'Entrada' : 'Saída';
+        const date = new Date(mov.created_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+        return [
+            date,
+            code,
+            name,
+            typeLabel,
+            Number(mov.quantidade || 0),
+            Number(mov.valor_total || 0).toFixed(2).replace('.', ','),
+            Number(mov.custo_unitario || 0).toFixed(3).replace('.', ',')
+        ];
+    });
+    const csv = [header, ...rows].map(r => r.map(v => {
+        const s = String(v ?? '');
+        if (s.includes(';') || s.includes(',') || s.includes('"') || s.includes('\n')) {
+            return '"' + s.replace(/"/g, '""') + '"';
+        }
+        return s;
+    }).join(';')).join('\n');
+
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'relatorio_estoque.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast('Exportação CSV iniciada.', 'success');
+}
+
+
+
+// Custo por unidade/medida: sempre 3 casas depois da vírgula (ex.: R$ 0,017)
+function formatUnitCost(val) {
+    return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 3, maximumFractionDigits: 3 }).format(Number(val) || 0);
+}
+
+function formatCurrency(val) {
+    return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(val);
+}
+
+function escapeHtml(str) {
+    return String(str).replace(/[&<>'"]/g,
+        tag => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[tag] || tag)
+    );
+}
+
+function populateItemsDatalist() {
+    const dl = document.getElementById('items-datalist');
+    if (!dl) return;
+    const names = [];
+    const seen = new Set();
+    (itemsList || []).forEach(item => {
+        const name = (item.titulo || item.title || item.nome || '').trim();
+        if (name && !seen.has(name.toLowerCase())) {
+            seen.add(name.toLowerCase());
+            names.push(name);
+        }
+    });
+    dl.innerHTML = names.map(n => `<option value="${escapeHtml(n)}"></option>`).join('');
+}
+
+function setupAutocomplete(inputId, resultsId) {
+    const input = document.getElementById(inputId);
+    const results = document.getElementById(resultsId);
+    if (!input || !results) return;
+    function renderList(filter) {
+        const q = (filter || '').trim().toLowerCase();
+        // Campo vazio: lista oculta
+        if (!q) {
+            results.classList.add('hidden');
+            results.innerHTML = '';
+            return;
+        }
+        const names = [];
+        const seen = new Set();
+        (itemsList || []).forEach(item => {
+            const name = (item.titulo || item.title || item.nome || '').trim();
+            if (!name) return;
+            if (q && !name.toLowerCase().includes(q)) return;
+            if (seen.has(name.toLowerCase())) return;
+            seen.add(name.toLowerCase());
+            names.push(name);
+        });
+        if (names.length === 0) {
+            results.classList.add('hidden');
+            results.innerHTML = '';
+            return;
+        }
+        results.innerHTML = names.map(n => '<div class="autocomplete-item hover:bg-brand-50 hover:text-brand-700 cursor-pointer p-2.5" data-value="' + escapeHtml(n) + '">' + escapeHtml(n) + '</div>').join('');
+        results.classList.remove('hidden');
+    }
+    input.addEventListener('input', () => renderList(input.value));
+    // Não abre ao focar; só ao clicar no campo (com texto) ou digitar
+    input.addEventListener('click', () => renderList(input.value));
+    results.addEventListener('click', (e) => {
+        const item = e.target.closest('.autocomplete-item');
+        if (item) {
+            input.value = item.getAttribute('data-value');
+            results.classList.add('hidden');
+            if (inputId === 'search-input') renderItems();
+        }
+    });
+}
+
+document.addEventListener('click', (e) => {
+    document.querySelectorAll('.autocomplete-results').forEach(r => {
+        const inp = r.previousElementSibling;
+        if (!r.contains(e.target) && !(inp && inp.contains(e.target))) {
+            r.classList.add('hidden');
+        }
+    });
+});
+
+function initAutocomplete() {
+    setupAutocomplete('rep-nome', 'rep-nome-results');
+    setupAutocomplete('search-input', 'search-results');
+}
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initAutocomplete);
+} else {
+    initAutocomplete();
+}
+
+let relatorioChart = null;
+let chartTab = 'preco';
+
+function setChartTab(tab) {
+    chartTab = tab === 'quantidade' ? 'quantidade' : 'preco';
+    document.querySelectorAll('.chart-tab').forEach(btn => {
+        if (btn.getAttribute('data-chart-tab') === chartTab) {
+            btn.classList.remove('bg-slate-100', 'text-slate-600', 'hover:bg-slate-200');
+            btn.classList.add('bg-brand-600', 'text-white');
+        } else {
+            btn.classList.remove('bg-brand-600', 'text-white');
+            btn.classList.add('bg-slate-100', 'text-slate-600', 'hover:bg-slate-200');
+        }
+    });
+    updateRelatorioChart(relatorioData || []);
+}
+
+function updateRelatorioChart(movs) {
+    const card = document.getElementById('relatorio-chart-card');
+    const canvas = document.getElementById('relatorio-chart');
+    if (!card || !canvas) return;
+
+    const data = (movs || []).slice().sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+
+    if (data.length === 0) {
+        card.classList.add('hidden');
+        if (relatorioChart) { relatorioChart.destroy(); relatorioChart = null; }
+        return;
+    }
+
+    card.classList.remove('hidden');
+
+    if (chartTab === 'preco') {
+        const unitCosts = data.map(m => Number(m.custo_unitario || 0));
+        const minVal = Math.min(...unitCosts);
+        const maxVal = Math.max(...unitCosts);
+        const avgVal = unitCosts.reduce((a, b) => a + b, 0) / unitCosts.length;
+
+        const l1 = document.getElementById('chart-label-1');
+        const l2 = document.getElementById('chart-label-2');
+        const l3 = document.getElementById('chart-label-3');
+        const v1 = document.getElementById('chart-val-1');
+        const v2 = document.getElementById('chart-val-2');
+        const v3 = document.getElementById('chart-val-3');
+        const c1 = document.getElementById('chart-card-1');
+        const c2 = document.getElementById('chart-card-2');
+        const c3 = document.getElementById('chart-card-3');
+        if (l1) l1.textContent = 'Menor Preço Pago';
+        if (l2) l2.textContent = 'Maior Preço Pago';
+        if (l3) l3.textContent = 'Custo Médio';
+        if (v1) v1.textContent = formatCurrency(minVal);
+        if (v2) v2.textContent = formatCurrency(maxVal);
+        if (v3) v3.textContent = formatCurrency(avgVal);
+        if (c1) c1.className = 'rounded-xl p-3 bg-emerald-50 text-emerald-700';
+        if (c2) c2.className = 'rounded-xl p-3 bg-rose-50 text-rose-700';
+        if (c3) c3.className = 'rounded-xl p-3 bg-sky-50 text-sky-700';
+        if (v1) v1.className = 'text-lg font-bold text-emerald-600';
+        if (v2) v2.className = 'text-lg font-bold text-rose-600';
+        if (v3) v3.className = 'text-lg font-bold text-sky-600';
+
+        const labels = data.map(m => new Date(m.created_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }));
+        const values = unitCosts;
+        const pointColors = values.map(v => {
+            if (v === minVal) return '#10b981';
+            if (v === maxVal) return '#f43f5e';
+            return '#0284c7';
+        });
+
+        if (relatorioChart) { relatorioChart.destroy(); relatorioChart = null; }
+        const ctx = canvas.getContext('2d');
+        const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+        gradient.addColorStop(0, 'rgba(2, 132, 199, 0.25)');
+        gradient.addColorStop(1, 'rgba(2, 132, 199, 0.02)');
+
+        relatorioChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Preço Unitário (R$)',
+                    data: values,
+                    borderColor: '#0284c7',
+                    backgroundColor: gradient,
+                    fill: true,
+                    tension: 0.4,
+                    pointBackgroundColor: pointColors,
+                    pointBorderColor: pointColors,
+                    pointRadius: 4,
+                    pointHoverRadius: 6
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: true, labels: { color: '#64748b', font: { size: 12 } } },
+                    tooltip: { mode: 'index', intersect: false }
+                },
+                scales: {
+                    x: { ticks: { color: '#64748b', font: { size: 11 }, maxRotation: 45, minRotation: 0 }, grid: { color: 'rgba(100, 116, 139, 0.1)' } },
+                    y: { ticks: { color: '#64748b', font: { size: 11 }, callback: v => 'R$ ' + Number(v).toFixed(2) }, grid: { color: 'rgba(100, 116, 139, 0.1)' } }
+                }
+            }
+        });
+    } else {
+
+        const entradas = data.filter(m => m.tipo === 'ENTRADA' || m.tipo === 'CADASTRO');
+        const saidas = data.filter(m => m.tipo === 'SAIDA');
+        const totalEntradas = entradas.reduce((a, m) => a + (Number(m.quantidade) || 0), 0);
+        const totalSaidas = saidas.reduce((a, m) => a + (Number(m.quantidade) || 0), 0);
+        const saldo = totalEntradas - totalSaidas;
+        const unidade = (data[0] && data[0].itens && data[0].itens.unidade) || (itemsList || []).find(i => String(i.id) === String(data[0].item_id))?.unidade || '';
+
+        const l1 = document.getElementById('chart-label-1');
+        const l2 = document.getElementById('chart-label-2');
+        const l3 = document.getElementById('chart-label-3');
+        const v1 = document.getElementById('chart-val-1');
+        const v2 = document.getElementById('chart-val-2');
+        const v3 = document.getElementById('chart-val-3');
+        const c1 = document.getElementById('chart-card-1');
+        const c2 = document.getElementById('chart-card-2');
+        const c3 = document.getElementById('chart-card-3');
+        if (l1) l1.textContent = 'Total de Entradas';
+        if (l2) l2.textContent = 'Total de Saídas';
+        if (l3) l3.textContent = 'Saldo Movimentado';
+        if (v1) v1.textContent = totalEntradas.toLocaleString('pt-BR') + ' ' + unidade;
+        if (v2) v2.textContent = totalSaidas.toLocaleString('pt-BR') + ' ' + unidade;
+        if (v3) v3.textContent = saldo.toLocaleString('pt-BR') + ' ' + unidade;
+        if (c1) c1.className = 'rounded-xl p-3 bg-emerald-50 text-emerald-700';
+        if (c2) c2.className = 'rounded-xl p-3 bg-rose-50 text-rose-700';
+        if (c3) c3.className = 'rounded-xl p-3 bg-sky-50 text-sky-700';
+        if (v1) v1.className = 'text-lg font-bold text-emerald-600';
+        if (v2) v2.className = 'text-lg font-bold text-rose-600';
+        if (v3) v3.className = 'text-lg font-bold text-sky-600';
+
+        const labels = data.map(m => new Date(m.created_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }));
+        const entradaVals = data.map(m => (m.tipo === 'ENTRADA' || m.tipo === 'CADASTRO') ? Number(m.quantidade || 0) : 0);
+        const saidaVals = data.map(m => m.tipo === 'SAIDA' ? Number(m.quantidade || 0) : 0);
+
+        if (relatorioChart) { relatorioChart.destroy(); relatorioChart = null; }
+        const ctx = canvas.getContext('2d');
+        relatorioChart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [
+                    { label: 'Entradas (' + unidade + ')', data: entradaVals, backgroundColor: 'rgba(16, 185, 129, 0.6)', borderColor: '#10b981', borderWidth: 1 },
+                    { label: 'Saídas (' + unidade + ')', data: saidaVals, backgroundColor: 'rgba(244, 63, 94, 0.6)', borderColor: '#f43f5e', borderWidth: 1 }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: true, labels: { color: '#64748b', font: { size: 12 } } } },
+                scales: {
+                    x: { ticks: { color: '#64748b', font: { size: 11 }, maxRotation: 45, minRotation: 0 }, grid: { color: 'rgba(100, 116, 139, 0.1)' } },
+                    y: { ticks: { color: '#64748b', font: { size: 11 } }, grid: { color: 'rgba(100, 116, 139, 0.1)' } }
+                }
+            }
+        });
+    }
+}
+
+document.addEventListener('click', (e) => {
+    const btn = e.target.closest('.chart-tab');
+    if (btn) {
+        setChartTab(btn.getAttribute('data-chart-tab'));
+    }
+});
+
+// init chart tab active state
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => setChartTab('preco'));
+} else {
+    setChartTab('preco');
+}
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => {
+        if (window.lucide) window.lucide.createIcons();
+    }, { once: true });
+} else if (window.lucide) {
+    window.lucide.createIcons();
+}
